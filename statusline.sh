@@ -148,15 +148,24 @@ latest_thread_row() {
 latest_session_file() {
   local row=$1
   local rollout_path=""
+  local session_files=()
+
   rollout_path=$(printf '%s' "$row" | awk -F '\t' '{print $4}')
   if [[ -n "$rollout_path" && -f "$rollout_path" ]]; then
     printf '%s' "$rollout_path"
     return 0
   fi
 
-  find "$CODEX_SESSIONS_DIR" -type f -name '*.jsonl' -print0 2>/dev/null \
-    | xargs -0 ls -t 2>/dev/null \
-    | head -1
+  [[ -n "${CODEX_SESSIONS_DIR:-}" && -d "$CODEX_SESSIONS_DIR" ]] || return 0
+
+  mapfile -d '' -t session_files < <(
+    find "$CODEX_SESSIONS_DIR" -type f -name '*.jsonl' -print0 2>/dev/null
+  )
+
+  [[ ${#session_files[@]} -gt 0 ]] || return 0
+
+  # shellcheck disable=SC2012
+  ls -t "${session_files[@]}" 2>/dev/null | head -1
 }
 
 token_payload_from_file() {
@@ -233,12 +242,35 @@ write_currency_config() {
   local code=$1
   local rate=$2
   local updated=$3
-  jq -n \
+  local config_dir
+  local tmp_file
+
+  config_dir=$(dirname -- "$CURRENCY_CONFIG_PATH")
+  if ! mkdir -p -- "$config_dir" 2>/dev/null; then
+    printf 'warning: failed to create currency config directory: %s\n' "$config_dir" >&2
+    return 0
+  fi
+
+  if ! tmp_file=$(mktemp "${CURRENCY_CONFIG_PATH}.tmp.XXXXXX" 2>/dev/null); then
+    printf 'warning: failed to create temporary currency config file: %s\n' "$CURRENCY_CONFIG_PATH" >&2
+    return 0
+  fi
+
+  if ! jq -n \
     --arg currency "$code" \
     --argjson cached_rate "$rate" \
     --arg rate_updated "$updated" \
     '{currency: $currency, cached_rate: $cached_rate, rate_updated: $rate_updated}' \
-    > "$CURRENCY_CONFIG_PATH" 2>/dev/null || true
+    > "$tmp_file" 2>/dev/null; then
+    printf 'warning: failed to write currency config: %s\n' "$CURRENCY_CONFIG_PATH" >&2
+    rm -f -- "$tmp_file"
+    return 0
+  fi
+
+  if ! mv -f -- "$tmp_file" "$CURRENCY_CONFIG_PATH" 2>/dev/null; then
+    printf 'warning: failed to replace currency config: %s\n' "$CURRENCY_CONFIG_PATH" >&2
+    rm -f -- "$tmp_file"
+  fi
 }
 
 parse_iso_epoch_seconds() {
@@ -343,9 +375,11 @@ currency_info() {
 
   if [[ "$code" == "AUD" ]]; then
     printf '%s\t%s\t%s\n' "$code" "$symbol" "$AUD_PER_USD_FALLBACK"
-  else
-    printf '%s\t%s\t%s\n' "AUD" "A$" "$AUD_PER_USD_FALLBACK"
+    return 0
   fi
+
+  printf 'warning: no exchange rate available for %s; falling back to USD\n' "$code" >&2
+  printf '%s\t%s\t%s\n' "USD" "$" "1"
 }
 
 model_price_usd_per_million() {

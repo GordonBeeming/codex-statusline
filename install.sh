@@ -34,6 +34,7 @@ ln -sf "${INSTALL_DIR}/${SCRIPT_NAME}" "${BIN_DIR}/${SHORTCUT_NAME}"
 
 if [[ ! -f "$CURRENCY_CONFIG" ]]; then
   echo "Creating AUD currency config at ${CURRENCY_CONFIG}..."
+  mkdir -p "$(dirname "$CURRENCY_CONFIG")"
   jq -n '{currency: "AUD"}' > "$CURRENCY_CONFIG"
 fi
 
