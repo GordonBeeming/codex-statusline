@@ -63,11 +63,11 @@ format_cost() {
   local formatted
   formatted=$(awk -v cost="$cost_usd" -v symbol="$symbol" -v rate="$rate" 'BEGIN { printf "%s%.2f", symbol, (cost + 0) * (rate + 0) }')
 
-  local cost_int
-  cost_int=$(awk -v cost="$cost_usd" 'BEGIN { printf "%d", cost + 0 }')
-  if (( cost_int >= 50 )); then
+  local converted_cost_int
+  converted_cost_int=$(awk -v cost="$cost_usd" -v rate="$rate" 'BEGIN { printf "%d", (cost + 0) * (rate + 0) }')
+  if (( converted_cost_int >= 50 )); then
     printf '%b%s%b' "$RED" "$formatted" "$RESET"
-  elif (( cost_int >= 25 )); then
+  elif (( converted_cost_int >= 25 )); then
     printf '%b%s%b' "$YELLOW" "$formatted" "$RESET"
   else
     printf '%s' "$formatted"
@@ -241,6 +241,62 @@ write_currency_config() {
     > "$CURRENCY_CONFIG_PATH" 2>/dev/null || true
 }
 
+parse_iso_epoch_seconds() {
+  local timestamp=$1
+  local parsed
+
+  if parsed=$(date -d "$timestamp" +%s 2>/dev/null); then
+    printf '%s\n' "$parsed"
+    return 0
+  fi
+
+  if parsed=$(date -j -f "%Y-%m-%dT%H:%M:%SZ" "$timestamp" +%s 2>/dev/null); then
+    printf '%s\n' "$parsed"
+    return 0
+  fi
+
+  if command -v python3 >/dev/null 2>&1; then
+    python3 - "$timestamp" <<'PY'
+import datetime
+import sys
+
+value = sys.argv[1]
+if value.endswith("Z"):
+    value = value[:-1] + "+00:00"
+print(int(datetime.datetime.fromisoformat(value).timestamp()))
+PY
+    return 0
+  fi
+
+  return 1
+}
+
+local_midnight_epoch_seconds() {
+  local midnight
+
+  if midnight=$(date -d 'today 00:00:00' +%s 2>/dev/null); then
+    printf '%s\n' "$midnight"
+    return 0
+  fi
+
+  if midnight=$(date -j -f "%Y-%m-%d %H:%M:%S" "$(date +%Y-%m-%d) 00:00:00" +%s 2>/dev/null); then
+    printf '%s\n' "$midnight"
+    return 0
+  fi
+
+  if command -v python3 >/dev/null 2>&1; then
+    python3 - <<'PY'
+import time
+
+now = time.localtime()
+print(int(time.mktime((now.tm_year, now.tm_mon, now.tm_mday, 0, 0, 0, now.tm_wday, now.tm_yday, now.tm_isdst))))
+PY
+    return 0
+  fi
+
+  return 1
+}
+
 currency_info() {
   local code
   code=$(currency_config_value currency)
@@ -261,7 +317,7 @@ currency_info() {
   now=$(now_epoch)
 
   if [[ "$cached_rate" =~ ^[0-9]+([.][0-9]+)?$ && -n "$rate_updated" ]]; then
-    updated_epoch=$(date -j -f "%Y-%m-%dT%H:%M:%SZ" "$rate_updated" +%s 2>/dev/null || true)
+    updated_epoch=$(parse_iso_epoch_seconds "$rate_updated" 2>/dev/null || true)
     if [[ "$updated_epoch" =~ ^[0-9]+$ && $(( now - updated_epoch )) -lt "$CURRENCY_RATE_TTL_SECONDS" ]]; then
       printf '%s\t%s\t%s\n' "$code" "$symbol" "$cached_rate"
       return 0
@@ -341,7 +397,7 @@ cost_usd_from_usage() {
 daily_rollout_paths() {
   [[ -f "$CODEX_STATE_DB" ]] || return 0
   local start_ms end_ms
-  start_ms=$(date -j -f "%Y-%m-%d %H:%M:%S" "$(date +%Y-%m-%d) 00:00:00" +%s 2>/dev/null || date +%s)
+  start_ms=$(local_midnight_epoch_seconds) || return 0
   start_ms=$(( start_ms * 1000 ))
   end_ms=$(( start_ms + 86400000 ))
 
@@ -364,9 +420,6 @@ daily_cost_usd() {
     [[ "$payload" != "{}" ]] || continue
     meta=$(session_meta_from_file "$path")
     model=$(printf '%s' "$meta" | json_get '.model // empty')
-    if [[ -z "$model" ]]; then
-      model=$(basename "$path" | sed -n 's/.*//p')
-    fi
     model=${model:-gpt-5.5}
     input=$(usage_field "$payload" '.info.total_token_usage.input_tokens')
     cached=$(usage_field "$payload" '.info.total_token_usage.cached_input_tokens')
