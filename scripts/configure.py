@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import argparse
 import os
 import re
 import stat
@@ -30,10 +31,13 @@ def update_config(config: Path, renderer: Path) -> None:
     pattern = re.compile(
         rf"(?ms)^\[{re.escape(SECTION)}\]\n.*?(?=^\[|\Z)"
     )
-    if pattern.search(original):
-        updated = pattern.sub(section + "\n\n", original, count=1)
-    else:
-        updated = original.rstrip() + ("\n\n" if original.strip() else "") + section + "\n"
+    without_existing_sections = pattern.sub("", original).rstrip()
+    updated = (
+        without_existing_sections
+        + ("\n\n" if without_existing_sections else "")
+        + section
+        + "\n"
+    )
 
     config.parent.mkdir(parents=True, exist_ok=True)
     mode = stat.S_IMODE(config.stat().st_mode) if config.exists() else 0o600
@@ -48,7 +52,14 @@ def update_config(config: Path, renderer: Path) -> None:
 
 if __name__ == "__main__":
     home = Path.home()
+    parser = argparse.ArgumentParser(description="Configure the native Codex status line")
+    parser.add_argument(
+        "--renderer",
+        type=Path,
+        default=home / ".local/share/codex-statusline/current/renderer/statusline.sh",
+    )
+    args = parser.parse_args()
     update_config(
         Path(os.environ.get("CODEX_HOME", home / ".codex")) / "config.toml",
-        home / ".local/share/codex-statusline/current/renderer/statusline.sh",
+        args.renderer.expanduser().resolve(),
     )

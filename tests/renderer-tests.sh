@@ -17,10 +17,11 @@ line_count=$(printf '%s\n' "$plain" | awk 'END { print NR }')
 [[ "$line_count" == "4" ]]
 grep -Fq 'GPT-5.6 Sol' <<<"$plain"
 grep -Fq 'high' <<<"$plain"
-grep -Fq '~A$0.41 API equiv' <<<"$plain"
+! grep -Fq 'API equiv' <<<"$plain"
 grep -Fq '42% 5h' <<<"$plain"
 grep -Fq '18% weekly' <<<"$plain"
 grep -Fq '31% ctx' <<<"$plain"
+! grep -Fq '325.5k / 1.1m' <<<"$plain"
 grep -Fq '89.0k in / 14.0k out' <<<"$plain"
 
 empty=$(printf '{}' | "$renderer")

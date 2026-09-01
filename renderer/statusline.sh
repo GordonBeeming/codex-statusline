@@ -14,16 +14,12 @@ fi
 
 eval "$(jq -r '
   @sh "cwd=\(.cwd // "")",
-  @sh "model_id=\(.model.id // "")",
   @sh "model_name=\(.model.display_name // .model.id // "")",
   @sh "effort=\(.effort.level // "")",
   @sh "runtime_state=\(.runtime.state // "")",
   @sh "task_progress=\(.runtime.task_progress // "")",
   @sh "ctx_used=\(.context_window.used_percentage // 0)",
-  @sh "ctx_remaining=\(.context_window.remaining_percentage // 100)",
-  @sh "ctx_window=\(.context_window.context_window_size // 0)",
   @sh "input_tokens=\(.context_window.total_input_tokens // 0)",
-  @sh "cached_tokens=\(.context_window.cached_input_tokens // 0)",
   @sh "output_tokens=\(.context_window.total_output_tokens // 0)",
   @sh "backend_cost_micros=\(.cost.estimated_thread_cost_usd_micros // "")",
   @sh "five_hour_used=\([.rate_limits[]?.primary, .rate_limits[]?.secondary] | map(select(.window_minutes >= 285 and .window_minutes <= 315)) | first.used_percentage // "")",
@@ -72,29 +68,6 @@ format_tokens() {
   }'
 }
 
-model_prices() {
-  case "$1" in
-    gpt-5.6-sol|gpt-5.6) printf '4 0.4 20' ;;
-    gpt-5.6-terra) printf '2 0.2 12' ;;
-    gpt-5.6-luna) printf '0.2 0.02 1.2' ;;
-    gpt-5.5) printf '5 0.5 30' ;;
-    gpt-5.4) printf '2.5 0.25 15' ;;
-    gpt-5.4-mini) printf '0.75 0.075 4.5' ;;
-    *) return 1 ;;
-  esac
-}
-
-api_equivalent_cost() {
-  local prices input_price cached_price output_price uncached
-  prices=$(model_prices "$model_id") || return 1
-  read -r input_price cached_price output_price <<<"$prices"
-  uncached=$((input_tokens - cached_tokens))
-  (( uncached < 0 )) && uncached=0
-  awk -v input="$uncached" -v cached="$cached_tokens" -v output="$output_tokens" \
-    -v ip="$input_price" -v cp="$cached_price" -v op="$output_price" \
-    'BEGIN { printf "%.6f", (input*ip + cached*cp + output*op) / 1000000 }'
-}
-
 repo_name=""
 branch_line=""
 if [[ -n "$cwd" ]]; then
@@ -124,12 +97,9 @@ line1=()
 
 line3=()
 aud_rate=${CODEX_STATUSLINE_AUD_PER_USD:-1.55}
-if [[ "$backend_cost_micros" =~ ^[0-9]+$ ]]; then
+if [[ "$backend_cost_micros" =~ ^[0-9]+$ && "$backend_cost_micros" -gt 0 ]]; then
   cost_aud=$(awk -v micros="$backend_cost_micros" -v rate="$aud_rate" 'BEGIN { printf "%.2f", micros / 1000000 * rate }')
   line3+=("💸 A\$$cost_aud session")
-elif (( input_tokens > 0 || output_tokens > 0 )) && cost_usd=$(api_equivalent_cost); then
-  cost_aud=$(awk -v usd="$cost_usd" -v rate="$aud_rate" 'BEGIN { printf "%.2f", usd * rate }')
-  line3+=("💸 ~A\$$cost_aud API equiv")
 fi
 if [[ "$five_hour_used" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
   five_hour_int=${five_hour_used%.*}
@@ -143,9 +113,6 @@ fi
 line4=()
 if [[ "$ctx_used" =~ ^[0-9]+$ ]]; then
   context_text="💭 $(make_bar "$ctx_used") ${ctx_used}% ctx"
-  if [[ "$ctx_window" =~ ^[0-9]+$ && "$ctx_window" -gt 0 ]]; then
-    context_text+=" ($(format_tokens $((ctx_window * ctx_used / 100))) / $(format_tokens "$ctx_window"))"
-  fi
   line4+=("$context_text")
 fi
 line4+=("🧠 $(format_tokens "$input_tokens") in / $(format_tokens "$output_tokens") out")

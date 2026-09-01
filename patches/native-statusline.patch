@@ -1,3 +1,37 @@
+diff --git a/codex-rs/Cargo.lock b/codex-rs/Cargo.lock
+index b59de3da7f..c56c958ce8 100644
+--- a/codex-rs/Cargo.lock
++++ b/codex-rs/Cargo.lock
+@@ -2385,7 +2385,7 @@ dependencies = [
+ 
+ [[package]]
+ name = "codex-cli"
+-version = "0.0.0"
++version = "0.152.0-statusline.2"
+ dependencies = [
+  "anyhow",
+  "app_test_support",
+@@ -4449,7 +4449,7 @@ dependencies = [
+ 
+ [[package]]
+ name = "codex-tui"
+-version = "0.0.0"
++version = "0.152.0-statusline.2"
+ dependencies = [
+  "anyhow",
+  "app_test_support",
+diff --git a/codex-rs/cli/Cargo.toml b/codex-rs/cli/Cargo.toml
+index 2640c964e0..1a2a7e8c21 100644
+--- a/codex-rs/cli/Cargo.toml
++++ b/codex-rs/cli/Cargo.toml
+@@ -1,6 +1,6 @@
+ [package]
+ name = "codex-cli"
+-version.workspace = true
++version = "0.152.0-statusline.2"
+ edition.workspace = true
+ license.workspace = true
+ build = "build.rs"
 diff --git a/codex-rs/config/src/loader/mod.rs b/codex-rs/config/src/loader/mod.rs
 index 48ea0d3bc5..052c9cf254 100644
 --- a/codex-rs/config/src/loader/mod.rs
@@ -169,6 +203,18 @@ index 44a0411504..f0eaf0e2ec 100644
              tui_status_line_use_colors: cfg
                  .tui
                  .as_ref()
+diff --git a/codex-rs/tui/Cargo.toml b/codex-rs/tui/Cargo.toml
+index 7de0ba58a0..3620a14ec1 100644
+--- a/codex-rs/tui/Cargo.toml
++++ b/codex-rs/tui/Cargo.toml
+@@ -1,6 +1,6 @@
+ [package]
+ name = "codex-tui"
+-version.workspace = true
++version = "0.152.0-statusline.2"
+ edition.workspace = true
+ license.workspace = true
+ autobins = false
 diff --git a/codex-rs/tui/src/app/background_requests.rs b/codex-rs/tui/src/app/background_requests.rs
 index c39f5c6375..8780ddd11a 100644
 --- a/codex-rs/tui/src/app/background_requests.rs

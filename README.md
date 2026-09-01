@@ -5,8 +5,8 @@ A genuine command-backed, multiline status line for the native Codex CLI.
 ```text
 📂 codex-statusline · 🤖 GPT-5.6 Sol · ⚡ high · Working · 2/5 tasks
 🔀 gb/native-statusline
-💸 ~A$0.41 API equiv · ⏱️ ████░░░░░░ 42% 5h · 📅 █░░░░░░░░░ 18% weekly
-💭 ███░░░░░░░ 31% ctx (325.5k / 1.1m) · 🧠 89.0k in / 14.0k out
+⏱️ ████░░░░░░ 42% 5h · 📅 █░░░░░░░░░ 18% weekly
+💭 ███░░░░░░░ 31% ctx · 🧠 89.0k in / 14.0k out
 ```
 
 This project mirrors the layout and extension model of
@@ -37,14 +37,14 @@ commit instead of maintaining a full source fork.
 Requirements:
 
 - macOS on Apple Silicon for the currently tested package
-- Git, Rustup, Python 3.10+, `just`, and DotSlash
+- Git, Rustup, Python 3.10+, DotSlash, and `jq`
 - `jq` for the renderer
 - Enough free disk space for a Codex release build
 
 Run:
 
 ```bash
-./scripts/build-native.sh
+./install.sh
 ```
 
 The builder:
@@ -58,9 +58,8 @@ The builder:
 
 The official npm-managed `codex` command is left untouched as a rollback path.
 
-The default local build uses Codex's `dev` profile because `dev-small` currently produces a
-malformed stripped procedural-macro dylib on this macOS toolchain. Set
-`CODEX_STATUSLINE_CARGO_PROFILE=release` when you deliberately want a full release-profile build.
+The default is a release-profile build. For a faster, much larger local trial build, run
+`CODEX_STATUSLINE_CARGO_PROFILE=dev ./install.sh`.
 
 ## Configure Codex
 
@@ -103,9 +102,10 @@ unknown fields so the payload can grow without breaking existing renderers.
 
 ## Cost semantics
 
-Codex is included in ChatGPT plans, so token pricing is not a subscription invoice. When the backend
-provides a real thread estimate, the renderer displays it. Otherwise it displays an explicitly
-marked `API equiv` estimate using current published OpenAI token prices.
+Codex is included in ChatGPT plans, so token pricing is not a subscription invoice. The renderer
+shows a session cost only when the backend provides a non-zero thread estimate. It does not derive
+one from token counts because model switches, long-context rates, and cache semantics can make that
+estimate misleading.
 
 The renderer does not invent a daily monetary total. Codex currently provides rate-limit usage, not
 a trustworthy daily ChatGPT subscription spend figure.
