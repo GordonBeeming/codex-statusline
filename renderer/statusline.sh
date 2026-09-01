@@ -30,6 +30,15 @@ eval "$(jq -r '
   @sh "weekly_used=\([.rate_limits[]?.primary, .rate_limits[]?.secondary] | map(select(.window_minutes >= 9576 and .window_minutes <= 10584)) | first.used_percentage // "")"
 ' <<<"$payload")"
 
+case "$model_name" in
+  gpt-5.6-sol|gpt-5.6) model_name="GPT-5.6 Sol" ;;
+  gpt-5.6-terra) model_name="GPT-5.6 Terra" ;;
+  gpt-5.6-luna) model_name="GPT-5.6 Luna" ;;
+  gpt-5.5) model_name="GPT-5.5" ;;
+  gpt-5.4) model_name="GPT-5.4" ;;
+  gpt-5.4-mini) model_name="GPT-5.4 mini" ;;
+esac
+
 join_parts() {
   local result="" part
   for part in "$@"; do
@@ -96,7 +105,7 @@ if [[ -n "$cwd" ]]; then
     if [[ "$branch" == "gitbutler/workspace" ]] && command -v but >/dev/null 2>&1; then
       branches=$(cd "$cwd" && but branch list --no-check --no-ahead --json 2>/dev/null \
         | jq -r '.appliedStacks[].heads[].name' 2>/dev/null \
-        | paste -sd ', ' - || true)
+        | paste -sd ',' - | sed 's/,/, /g' || true)
       branch_line="🌿 ${branches:-gitbutler/workspace}"
     elif [[ -n "$branch" ]]; then
       branch_line="🔀 $branch"
@@ -118,7 +127,7 @@ aud_rate=${CODEX_STATUSLINE_AUD_PER_USD:-1.55}
 if [[ "$backend_cost_micros" =~ ^[0-9]+$ ]]; then
   cost_aud=$(awk -v micros="$backend_cost_micros" -v rate="$aud_rate" 'BEGIN { printf "%.2f", micros / 1000000 * rate }')
   line3+=("💸 A\$$cost_aud session")
-elif cost_usd=$(api_equivalent_cost); then
+elif (( input_tokens > 0 || output_tokens > 0 )) && cost_usd=$(api_equivalent_cost); then
   cost_aud=$(awk -v usd="$cost_usd" -v rate="$aud_rate" 'BEGIN { printf "%.2f", usd * rate }')
   line3+=("💸 ~A\$$cost_aud API equiv")
 fi
