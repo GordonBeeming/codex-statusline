@@ -27,4 +27,13 @@ grep -Fq '89.0k in / 14.0k out' <<<"$plain"
 empty=$(printf '{}' | "$renderer")
 [[ -z "$empty" ]]
 
+marker="$fixture_repo/arithmetic-expansion-ran"
+attack='x[$(touch '"$marker"')]'
+jq --arg cwd "$fixture_repo" --arg attack "$attack" \
+  '.cwd = $cwd
+    | .context_window.total_input_tokens = $attack
+    | .context_window.total_output_tokens = $attack' "$fixture" \
+  | "$renderer" >/dev/null
+[[ ! -e "$marker" ]]
+
 printf 'renderer tests passed\n'
