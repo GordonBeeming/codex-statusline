@@ -1,116 +1,149 @@
 # codex-statusline
 
-An enhanced status summary for Codex CLI that mirrors the four-line [`claude-statusline`](https://github.com/GordonBeeming/claude-statusline) layout as closely as Codex currently allows.
+A genuine command-backed, multiline status line for the native Codex CLI.
 
 ```text
-📂 codex-statusline · 🔀 main
-🤖 GPT-5.5 · ⚡ medium
-💸 A$0.02 session · 💰 A$0.18 today · ⏱️ █░░░░░░░░░ 13% 4h10m left
-💭 █░░░░░░░░░ 11% used · 89% left (29k / 258k)
+📂 codex-statusline · 🤖 GPT-5.6 Sol · ⚡ high · Working · 2/5 tasks
+🔀 gb/native-statusline
+💸 ~A$0.41 API equiv · ⏱️ ████░░░░░░ 42% 5h · 📅 █░░░░░░░░░ 18% weekly
+💭 ███░░░░░░░ 31% ctx (325.5k / 1.1m) · 🧠 89.0k in / 14.0k out
 ```
 
-## What It Shows
+This project mirrors the layout and extension model of
+[`claude-statusline`](https://github.com/GordonBeeming/claude-statusline), but it renders inside
+Codex's Ratatui interface rather than faking a footer through terminal output or tmux.
 
-| Line | Purpose | Contents |
-| --- | --- | --- |
-| 1 | Identity | Repo/folder name and Git branch |
-| 2 | Model | Current Codex model and reasoning effort |
-| 3 | Spend and limits | Estimated session cost, estimated daily cost, 5-hour rate limit |
-| 4 | Context | Current context window usage, matching the concept Codex shows in `/status` |
+## Why a patched build?
 
-## Codex Limitation
+Official Codex currently accepts only built-in identifiers in `tui.status_line`. It does not invoke
+user commands, and its released footer deliberately stays on one line. The native patch in this
+repository adds both missing capabilities:
 
-Claude Code supports a command-backed status line. Codex CLI currently exposes `tui.status_line` as a list of built-in footer item identifiers, not as a command hook. See the [Codex config reference](https://developers.openai.com/codex/config-reference).
+- `[tui.status_line_command]` executes a user-level argv command asynchronously.
+- Codex sends a versioned JSON session snapshot on stdin.
+- Up to eight ANSI-SGR styled output lines can be rendered as fixed footer rows.
+- Slow or failing commands keep the last successful output and never block drawing.
+- Command output is capped and strips OSC, control, and bidirectional override sequences.
+- Project-local `.codex/config.toml` files cannot register a status command.
 
-This repo therefore provides:
+The related upstream requests are
+[`openai/codex#17827`](https://github.com/openai/codex/issues/17827) and
+[`openai/codex#21653`](https://github.com/openai/codex/issues/21653). OpenAI's repository does not
+accept external pull requests, so this project ships a reviewable patch against one pinned upstream
+commit instead of maintaining a full source fork.
 
-- `statusline.sh` — a Codex-native cost/status script that reads local Codex state and session JSONL logs
-- `install.sh` — installs the script under `~/.codex/scripts/`, creates a `cs` shortcut, and prints the closest native Codex `tui.status_line` config
+## Build and install
 
-The script is useful as a terminal command, tmux status command, shell prompt segment, or a future Codex command-backed status provider if Codex adds that hook. Codex does not currently expose user-defined slash commands, so `/cs` is not available; use `cs` in the terminal instead.
+Requirements:
 
-## Install
+- macOS on Apple Silicon for the currently tested package
+- Git, Rustup, Python 3.10+, `just`, and DotSlash
+- `jq` for the renderer
+- Enough free disk space for a Codex release build
+
+Run:
 
 ```bash
-./install.sh
+./scripts/build-native.sh
 ```
 
-Then run:
+The builder:
 
-```bash
-cs
-```
+1. Verifies the patch checksum and exact upstream commit in `upstream.lock`.
+2. Clones that commit into a temporary directory.
+3. Checks and applies `patches/native-statusline.patch`.
+4. Uses Codex's canonical package builder, including the code-mode host and bundled resources.
+5. Installs a versioned package under `~/.local/share/codex-statusline/releases/`.
+6. Creates the separate `~/.local/bin/codex-statusline` launcher.
 
-`cs` is installed as a symlink in `~/.local/bin`. If that directory is not on your `PATH`, run the script directly:
+The official npm-managed `codex` command is left untouched as a rollback path.
 
-```bash
-~/.codex/scripts/codex-statusline.sh
-```
+The default local build uses Codex's `dev` profile because `dev-small` currently produces a
+malformed stripped procedural-macro dylib on this macOS toolchain. Set
+`CODEX_STATUSLINE_CARGO_PROFILE=release` when you deliberately want a full release-profile build.
 
-For the closest built-in Codex footer, add this to `~/.codex/config.toml`:
+## Configure Codex
+
+Add this user-level configuration to `~/.codex/config.toml`:
 
 ```toml
 [tui]
-status_line = ["model-with-reasoning", "context-remaining", "current-dir", "git-branch"]
+status_line = []
 terminal_title = ["spinner", "project"]
+
+[tui.status_line_command]
+command = ["/Users/YOU/.local/share/codex-statusline/current/renderer/statusline.sh"]
+refresh_interval_ms = 1000
+timeout_ms = 1000
+max_lines = 4
 ```
 
-## AUD Currency
-
-All costs display in AUD by default. The exchange rate cache follows the same shape as [`goccc`](https://github.com/backstabslash/goccc):
-
-```json
-{
-  "currency": "AUD",
-  "cached_rate": 1.55,
-  "rate_updated": "2026-04-28T13:30:00Z"
-}
-```
-
-The default config path is:
-
-```text
-~/.codex-statusline.json
-```
-
-Rates are fetched from `https://open.er-api.com/v6/latest/USD` and cached for 24 hours. If the API is unavailable, the script uses the cached rate. If there is no cached rate yet, AUD falls back to `1.55` unless `CODEX_STATUSLINE_AUD_PER_USD` is set.
-
-## Cost Model
-
-Codex itself is included in ChatGPT plans, so this script shows an API-equivalent estimate rather than an invoice total. It uses [OpenAI's published API token rates](https://openai.com/api/pricing/) for:
-
-- `gpt-5.5`
-- `gpt-5.4`
-- `gpt-5.4-mini`
-
-Unknown models display with zero cost unless all three override variables are set:
+Then launch:
 
 ```bash
-export CODEX_STATUSLINE_PRICE_GPT_5_3_CODEX_INPUT=2.50
-export CODEX_STATUSLINE_PRICE_GPT_5_3_CODEX_CACHED_INPUT=0.25
-export CODEX_STATUSLINE_PRICE_GPT_5_3_CODEX_OUTPUT=15.00
+codex-statusline
 ```
 
-Prices are USD per 1M tokens before conversion to AUD.
+The patched binary deliberately ignores `tui.status_line_command` in repository configuration.
+Only user, system, managed, or explicit runtime configuration may register an executable command.
 
-Cost estimates are calculated from cumulative billable input, cached input, and output tokens in Codex's local session log. The status line's context row is separate: it shows the current context window only, so it can be compared with `/status`.
+## JSON contract
 
-## Dependencies
+The renderer receives `schema_version: 1` with these groups:
 
-- `jq`
-- `sqlite3`
-- `git`
-- `but` optional, for GitButler branch names
-- `curl` optional, for exchange-rate refresh
+- Thread identity, name, model, reasoning effort, and current run state
+- Active working directory
+- Canonical context used/remaining percentages and token totals
+- Five-hour and weekly rate-limit windows when available
+- Backend-provided thread cost/credits when the account exposes them
+- Current task progress and terminal width
 
-## Configuration
+Unavailable fields are `null` or omitted by the corresponding nested value. Scripts should ignore
+unknown fields so the payload can grow without breaking existing renderers.
 
-| Variable | Default | Description |
-| --- | --- | --- |
-| `CODEX_HOME` | `~/.codex` | Codex home directory |
-| `CODEX_STATUSLINE_STATE_DB` | `$CODEX_HOME/state_5.sqlite` | Codex state database |
-| `CODEX_STATUSLINE_SESSIONS_DIR` | `$CODEX_HOME/sessions` | Codex session JSONL directory |
-| `CODEX_STATUSLINE_CURRENCY_CONFIG` | `~/.codex-statusline.json` | Currency config/cache file |
-| `CODEX_STATUSLINE_CURRENCY` | `AUD` | Currency code used when config has no `currency` |
-| `CODEX_STATUSLINE_AUD_PER_USD` | `1.55` | AUD fallback rate if no live or cached rate is available |
-| `CODEX_STATUSLINE_CONTEXT_WINDOW` | `258400` | Fallback context window size |
+## Cost semantics
+
+Codex is included in ChatGPT plans, so token pricing is not a subscription invoice. When the backend
+provides a real thread estimate, the renderer displays it. Otherwise it displays an explicitly
+marked `API equiv` estimate using current published OpenAI token prices.
+
+The renderer does not invent a daily monetary total. Codex currently provides rate-limit usage, not
+a trustworthy daily ChatGPT subscription spend figure.
+
+## Validate
+
+Fast repository checks:
+
+```bash
+./scripts/verify.sh
+```
+
+The native patch has also been validated against the pinned Codex source with:
+
+```bash
+cd codex-rs
+just fmt
+cargo check -p codex-tui
+just test -p codex-tui
+```
+
+The local full TUI run executed 4,113 tests. All new command-renderer and multiline-footer tests
+passed. Remaining failures were pre-existing locale and terminal/editor-environment snapshots in
+unchanged code paths.
+
+## Updating upstream
+
+Updates are intentionally manual:
+
+1. Advance `UPSTREAM_COMMIT` and `UPSTREAM_VERSION` in `upstream.lock`.
+2. Rebase the patch against that exact commit.
+3. Regenerate `PATCH_SHA256`.
+4. Run Codex formatting, schema generation, focused tests, and the full TUI suite.
+5. Build into a new versioned release directory and switch `current` only after verification.
+
+The previous official `codex` installation remains available even if a patched build fails.
+
+## License and attribution
+
+Licensed under Apache-2.0. OpenAI Codex's NOTICE and the credited source implementations are under
+`THIRD_PARTY_NOTICES/`.

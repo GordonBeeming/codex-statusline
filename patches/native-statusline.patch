@@ -1,0 +1,3858 @@
+diff --git a/codex-rs/config/src/loader/mod.rs b/codex-rs/config/src/loader/mod.rs
+index 48ea0d3bc5..052c9cf254 100644
+--- a/codex-rs/config/src/loader/mod.rs
++++ b/codex-rs/config/src/loader/mod.rs
+@@ -1200,6 +1200,11 @@ fn sanitize_project_config(
+             }
+         }
+     }
++    if let Some(tui) = table.get_mut("tui").and_then(TomlValue::as_table_mut)
++        && tui.remove("status_line_command").is_some()
++    {
++        ignored_keys.push("tui.status_line_command".to_string());
++    }
+     if credential_broker == CredentialBrokerProjectState::Enabled
+         && let Some(policy) = table
+             .get_mut("shell_environment_policy")
+diff --git a/codex-rs/config/src/types.rs b/codex-rs/config/src/types.rs
+index ed956cbf89..efe12d2d2a 100644
+--- a/codex-rs/config/src/types.rs
++++ b/codex-rs/config/src/types.rs
+@@ -693,6 +693,38 @@ pub struct ModelAvailabilityNuxConfig {
+ /// Fallback resize-reflow row cap when Codex cannot identify a terminal-specific scrollback size.
+ pub const DEFAULT_TERMINAL_RESIZE_REFLOW_FALLBACK_MAX_ROWS: usize = 1_000;
+ 
++fn default_status_line_command_refresh_interval_ms() -> u64 {
++    1_000
++}
++
++fn default_status_line_command_timeout_ms() -> u64 {
++    250
++}
++
++fn default_status_line_command_max_lines() -> usize {
++    4
++}
++
++/// User-level command that renders a custom TUI status line from a JSON snapshot.
++#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema)]
++#[schemars(deny_unknown_fields)]
++pub struct TuiStatusLineCommand {
++    /// Command and arguments to execute directly, without a shell.
++    pub command: Vec<String>,
++
++    /// Minimum delay between command runs.
++    #[serde(default = "default_status_line_command_refresh_interval_ms")]
++    pub refresh_interval_ms: u64,
++
++    /// Maximum duration of one command run.
++    #[serde(default = "default_status_line_command_timeout_ms")]
++    pub timeout_ms: u64,
++
++    /// Maximum number of stdout lines rendered in the footer.
++    #[serde(default = "default_status_line_command_max_lines")]
++    pub max_lines: usize,
++}
++
+ /// Collection of settings that are specific to the TUI.
+ #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default, JsonSchema)]
+ #[schemars(deny_unknown_fields)]
+@@ -735,6 +767,13 @@ pub struct Tui {
+     #[serde(default)]
+     pub status_line: Option<Vec<String>>,
+ 
++    /// Optional command-backed status-line renderer.
++    ///
++    /// Codex writes a versioned JSON session snapshot to stdin and renders the
++    /// command's stdout. This setting is ignored in project-local config.
++    #[serde(default)]
++    pub status_line_command: Option<TuiStatusLineCommand>,
++
+     /// Color status line items with colors derived from the active syntax theme.
+     /// Defaults to `true`.
+     #[serde(default = "default_true")]
+diff --git a/codex-rs/core/config.schema.json b/codex-rs/core/config.schema.json
+index 11e20bd67e..b6bba9b578 100644
+--- a/codex-rs/core/config.schema.json
++++ b/codex-rs/core/config.schema.json
+@@ -4033,6 +4033,15 @@
+           },
+           "type": "array"
+         },
++        "status_line_command": {
++          "allOf": [
++            {
++              "$ref": "#/definitions/TuiStatusLineCommand"
++            }
++          ],
++          "default": null,
++          "description": "Optional command-backed status-line renderer.\n\nCodex writes a versioned JSON session snapshot to stdin and renders the command's stdout. This setting is ignored in project-local config."
++        },
+         "status_line_use_colors": {
+           "default": true,
+           "description": "Color status line items with colors derived from the active syntax theme. Defaults to `true`.",
+@@ -4988,6 +4997,44 @@
+         }
+       ]
+     },
++    "TuiStatusLineCommand": {
++      "additionalProperties": false,
++      "description": "User-level command that renders a custom TUI status line from a JSON snapshot.",
++      "properties": {
++        "command": {
++          "description": "Command and arguments to execute directly, without a shell.",
++          "items": {
++            "type": "string"
++          },
++          "type": "array"
++        },
++        "max_lines": {
++          "default": 4,
++          "description": "Maximum number of stdout lines rendered in the footer.",
++          "format": "uint",
++          "minimum": 0.0,
++          "type": "integer"
++        },
++        "refresh_interval_ms": {
++          "default": 1000,
++          "description": "Minimum delay between command runs.",
++          "format": "uint64",
++          "minimum": 0.0,
++          "type": "integer"
++        },
++        "timeout_ms": {
++          "default": 250,
++          "description": "Maximum duration of one command run.",
++          "format": "uint64",
++          "minimum": 0.0,
++          "type": "integer"
++        }
++      },
++      "required": [
++        "command"
++      ],
++      "type": "object"
++    },
+     "TuiVimNormalKeymap": {
+       "additionalProperties": false,
+       "description": "Vim normal-mode keybindings for modal editing inside text areas.\n\nActions that use uppercase letters (like `A` for append-line-end) should be specified as `shift-a` in config; the runtime matcher handles cross-terminal shift-reporting differences automatically.",
+diff --git a/codex-rs/core/src/config/mod.rs b/codex-rs/core/src/config/mod.rs
+index 44a0411504..f0eaf0e2ec 100644
+--- a/codex-rs/core/src/config/mod.rs
++++ b/codex-rs/core/src/config/mod.rs
+@@ -54,6 +54,7 @@ use codex_config::types::ToolSuggestDiscoverable;
+ use codex_config::types::TuiKeymap;
+ use codex_config::types::TuiNotificationSettings;
+ use codex_config::types::TuiPetAnchor;
++use codex_config::types::TuiStatusLineCommand;
+ use codex_config::types::UriBasedFileOpener;
+ use codex_config::types::WindowsSandboxModeToml;
+ use codex_core_plugins::PluginLoadOutcome;
+@@ -765,6 +766,9 @@ pub struct Config {
+     /// When unset, the TUI defaults to: `model-with-reasoning` and `current-dir`.
+     pub tui_status_line: Option<Vec<String>>,
+ 
++    /// Optional user-level command-backed status-line renderer.
++    pub tui_status_line_command: Option<TuiStatusLineCommand>,
++
+     /// Whether to color status line items with colors from the active syntax theme.
+     pub tui_status_line_use_colors: bool,
+ 
+@@ -4338,6 +4342,10 @@ impl Config {
+                 .map(|t| t.alternate_screen)
+                 .unwrap_or_default(),
+             tui_status_line: cfg.tui.as_ref().and_then(|t| t.status_line.clone()),
++            tui_status_line_command: cfg
++                .tui
++                .as_ref()
++                .and_then(|t| t.status_line_command.clone()),
+             tui_status_line_use_colors: cfg
+                 .tui
+                 .as_ref()
+diff --git a/codex-rs/tui/src/app/background_requests.rs b/codex-rs/tui/src/app/background_requests.rs
+index c39f5c6375..8780ddd11a 100644
+--- a/codex-rs/tui/src/app/background_requests.rs
++++ b/codex-rs/tui/src/app/background_requests.rs
+@@ -217,6 +217,23 @@ impl App {
+         });
+     }
+ 
++    pub(super) fn refresh_status_line_command(
++        &mut self,
++        request_id: u64,
++        config: codex_config::types::TuiStatusLineCommand,
++        payload: String,
++        cwd: std::path::PathBuf,
++    ) {
++        let app_event_tx = self.app_event_tx.clone();
++        tokio::spawn(async move {
++            let result = crate::chatwidget::status_line_command::run_status_line_command(
++                &config, &payload, &cwd,
++            )
++            .await;
++            app_event_tx.send(AppEvent::StatusLineCommandUpdated { request_id, result });
++        });
++    }
++
+     pub(super) fn send_add_credits_nudge_email(
+         &mut self,
+         app_server: &AppServerSession,
+diff --git a/codex-rs/tui/src/app/event_dispatch.rs b/codex-rs/tui/src/app/event_dispatch.rs
+index 693892539f..b7f4ad92db 100644
+--- a/codex-rs/tui/src/app/event_dispatch.rs
++++ b/codex-rs/tui/src/app/event_dispatch.rs
+@@ -1231,6 +1231,14 @@ impl App {
+             AppEvent::RefreshStatusLineWorkspaceHeadline { request_id } => {
+                 self.refresh_status_line_workspace_headline(app_server, request_id);
+             }
++            AppEvent::RefreshStatusLineCommand {
++                request_id,
++                config,
++                payload,
++                cwd,
++            } => {
++                self.refresh_status_line_command(request_id, config, payload, cwd);
++            }
+             AppEvent::OpenThreadGoalMenu { thread_id } => {
+                 self.open_thread_goal_menu(app_server, thread_id).await;
+             }
+@@ -2870,6 +2878,14 @@ impl App {
+                     tui.frame_requester().schedule_frame();
+                 }
+             }
++            AppEvent::StatusLineCommandUpdated { request_id, result } => {
++                if self
++                    .chat_widget
++                    .set_status_line_command_output(request_id, result)
++                {
++                    tui.frame_requester().schedule_frame();
++                }
++            }
+             AppEvent::StatusLineSetupCancelled => {
+                 self.chat_widget.cancel_status_line_setup();
+             }
+diff --git a/codex-rs/tui/src/app_event.rs b/codex-rs/tui/src/app_event.rs
+index 0e10c5cdac..30352d3993 100644
+--- a/codex-rs/tui/src/app_event.rs
++++ b/codex-rs/tui/src/app_event.rs
+@@ -57,6 +57,7 @@ use crate::chatwidget::UserMessage;
+ use crate::goal_files::GoalDraft;
+ use codex_app_server_protocol::AskForApproval;
+ use codex_config::types::ApprovalsReviewer;
++use codex_config::types::TuiStatusLineCommand;
+ use codex_features::Feature;
+ use codex_plugin::PluginCapabilitySummary;
+ use codex_protocol::config_types::CollaborationModeMask;
+@@ -591,6 +592,14 @@ pub(crate) enum AppEvent {
+         request_id: u64,
+     },
+ 
++    /// Run the user-level command-backed status-line renderer.
++    RefreshStatusLineCommand {
++        request_id: u64,
++        config: TuiStatusLineCommand,
++        payload: String,
++        cwd: PathBuf,
++    },
++
+     /// Commit settled asynchronous usage output after active-output barriers clear.
+     CommitPendingUsageOutput,
+ 
+@@ -1280,6 +1289,11 @@ pub(crate) enum AppEvent {
+         request_id: u64,
+         result: Result<crate::workspace_messages::WorkspaceHeadlineFetchResult, String>,
+     },
++    /// Result of a command-backed status-line render.
++    StatusLineCommandUpdated {
++        request_id: u64,
++        result: Result<Option<Vec<String>>, String>,
++    },
+     /// Apply a user-confirmed status-line item ordering/selection.
+     StatusLineSetup {
+         items: Vec<StatusLineItem>,
+diff --git a/codex-rs/tui/src/bottom_pane/chat_composer.rs b/codex-rs/tui/src/bottom_pane/chat_composer.rs
+index e1456aa679..b373df0518 100644
+--- a/codex-rs/tui/src/bottom_pane/chat_composer.rs
++++ b/codex-rs/tui/src/bottom_pane/chat_composer.rs
+@@ -204,7 +204,6 @@ use crate::key_hint;
+ use crate::key_hint::KeyBinding;
+ use crate::key_hint::ShortcutHint;
+ use crate::key_hint::has_ctrl_or_alt;
+-use crate::line_truncation::truncate_line_with_ellipsis_if_overflow;
+ use crate::ui_consts::FOOTER_INDENT_COLS;
+ use codex_message_history::HistoryBatchCursor;
+ use crossterm::event::KeyCode;
+@@ -246,6 +245,7 @@ use super::footer::FooterKeyHints;
+ use super::footer::FooterMode;
+ use super::footer::FooterProps;
+ use super::footer::GoalStatusIndicator;
++use super::footer::PassiveFooterLayout;
+ use super::footer::SummaryLeft;
+ use super::footer::can_show_left_with_context;
+ use super::footer::context_window_line;
+@@ -254,12 +254,14 @@ use super::footer::footer_height;
+ use super::footer::footer_hint_items_width;
+ use super::footer::footer_line_width;
+ use super::footer::inset_footer_hint_area;
+-use super::footer::max_left_width_for_right;
+-use super::footer::passive_footer_status_line;
++use super::footer::passive_footer_layout as compose_passive_footer_layout;
++use super::footer::passive_footer_layout_with_indicator_fallback;
++use super::footer::passive_footer_status;
+ use super::footer::render_context_right;
+ use super::footer::render_footer_from_props;
+ use super::footer::render_footer_hint_items;
+ use super::footer::render_footer_line;
++use super::footer::render_passive_footer;
+ use super::footer::reset_mode_after_activity;
+ use super::footer::side_conversation_context_line;
+ use super::footer::single_line_footer_layout;
+@@ -325,6 +327,7 @@ use crate::app_event::ConnectorsSnapshot;
+ use crate::app_event_sender::AppEventSender;
+ use crate::bottom_pane::LocalImageAttachment;
+ use crate::bottom_pane::MentionBinding;
++use crate::bottom_pane::StatusLine;
+ use crate::bottom_pane::textarea::TextArea;
+ use crate::clipboard_paste::normalize_pasted_path;
+ use crate::clipboard_paste::pasted_image_format;
+@@ -761,10 +764,10 @@ impl ChatComposer {
+             self.effort_ignition = Some(EffortIgnition::new(tier, style));
+             self.effort_animation_style = Some(style);
+             if self.footer.status_line_enabled
+-                && let Some(previous) = passive_footer_status_line(&self.footer_props())
++                && let Some(previous) = passive_footer_status(&self.footer_props())
+             {
+                 self.effort_status_line_transition =
+-                    Some(EffortStatusLineTransition::new(tier, previous));
++                    Some(EffortStatusLineTransition::new(tier, previous.to_line()));
+             }
+             if let Some(frame_requester) = &self.frame_requester {
+                 frame_requester.schedule_frame();
+@@ -1021,12 +1024,9 @@ impl ChatComposer {
+         area: Rect,
+         textarea_right_reserve: u16,
+     ) -> [Rect; 4] {
+-        let footer_props = self.footer_props();
+-        let footer_hint_height = self
+-            .custom_footer_height()
+-            .unwrap_or_else(|| footer_height(&footer_props));
++        let footer_hint_height = self.footer_hint_height(area.width);
+         let footer_spacing = Self::footer_spacing(footer_hint_height);
+-        let footer_total_height = footer_hint_height + footer_spacing;
++        let footer_total_height = footer_hint_height.saturating_add(footer_spacing);
+         let popup_constraint = match &self.popups.active {
+             ActivePopup::Command(popup) => {
+                 Constraint::Max(popup.calculate_required_height(area.width))
+@@ -1461,6 +1461,38 @@ impl ChatComposer {
+         }
+     }
+ 
++    fn passive_footer_layout(&self, width: u16) -> Option<PassiveFooterLayout> {
++        let props = self.footer_props();
++        if !uses_passive_footer_status_layout(&props) {
++            return None;
++        }
++
++        let status = passive_footer_status(&props);
++        let right_indicator =
++            if let Some(label) = self.footer.side_conversation_context_label.as_ref() {
++                Some(side_conversation_context_line(label))
++            } else if let Some(line) = self.shell_mode_footer_line() {
++                Some(line)
++            } else {
++                let show_cycle_hint =
++                    !props.is_task_running && self.footer.collaboration_mode_indicator.is_some();
++                let full = self.mode_indicator_line(show_cycle_hint);
++                let compact = self.mode_indicator_line(/*show_cycle_hint*/ false);
++                return Some(passive_footer_layout_with_indicator_fallback(
++                    status.as_ref(),
++                    width,
++                    full,
++                    compact,
++                ));
++            };
++
++        Some(compose_passive_footer_layout(
++            status.as_ref(),
++            width,
++            right_indicator,
++        ))
++    }
++
+     fn right_footer_line_with_context(&self) -> Line<'static> {
+         let mut line = if self.footer.context_window_pending {
+             Line::default()
+@@ -3964,6 +3996,20 @@ impl ChatComposer {
+             .map(|items| if items.is_empty() { 0 } else { 1 })
+     }
+ 
++    fn footer_hint_height(&self, width: u16) -> u16 {
++        if let Some(height) = self.custom_footer_height() {
++            return height;
++        }
++        let props = self.footer_props();
++        if uses_passive_footer_status_layout(&props) {
++            return self
++                .passive_footer_layout(width)
++                .map(|layout| layout.height())
++                .unwrap_or(1);
++        }
++        footer_height(&props)
++    }
++
+     pub(crate) fn sync_popups(&mut self) {
+         self.sync_slash_command_elements();
+         if self.history_search.is_some() || self.draft.textarea.vim_query().is_some() {
+@@ -4434,7 +4480,7 @@ impl ChatComposer {
+         }
+     }
+ 
+-    pub(crate) fn set_status_line(&mut self, status_line: Option<Line<'static>>) -> bool {
++    pub(crate) fn set_status_line(&mut self, status_line: Option<StatusLine>) -> bool {
+         if self.footer.status_line_value == status_line {
+             return false;
+         }
+@@ -4625,12 +4671,9 @@ impl ChatComposer {
+         width: u16,
+         textarea_right_reserve: u16,
+     ) -> u16 {
+-        let footer_props = self.footer_props();
+-        let footer_hint_height = self
+-            .custom_footer_height()
+-            .unwrap_or_else(|| footer_height(&footer_props));
++        let footer_hint_height = self.footer_hint_height(width);
+         let footer_spacing = Self::footer_spacing(footer_hint_height);
+-        let footer_total_height = footer_hint_height + footer_spacing;
++        let footer_total_height = footer_hint_height.saturating_add(footer_spacing);
+         const COLS_WITH_MARGIN: u16 = LIVE_PREFIX_COLS + 1;
+         let inner_width =
+             width.saturating_sub(COLS_WITH_MARGIN.saturating_add(textarea_right_reserve));
+@@ -4641,17 +4684,19 @@ impl ChatComposer {
+             .try_into()
+             .unwrap_or(u16::MAX);
+         let remote_images_separator = u16::from(remote_images_height > 0);
+-        self.draft.textarea.desired_height(inner_width)
+-            + remote_images_height
+-            + remote_images_separator
+-            + 2
+-            + match &self.popups.active {
++        self.draft
++            .textarea
++            .desired_height(inner_width)
++            .saturating_add(remote_images_height)
++            .saturating_add(remote_images_separator)
++            .saturating_add(2)
++            .saturating_add(match &self.popups.active {
+                 ActivePopup::None => footer_total_height,
+                 ActivePopup::Command(c) => c.calculate_required_height(width),
+                 ActivePopup::File(c) => c.calculate_required_height(),
+                 ActivePopup::Skill(c) => c.calculate_required_height(width),
+                 ActivePopup::MentionV2(c) => c.calculate_required_height(width),
+-            }
++            })
+     }
+ }
+ 
+@@ -4704,9 +4749,7 @@ impl ChatComposer {
+                     | FooterMode::ShortcutOverlay
+                     | FooterMode::EscHint => false,
+                 };
+-                let custom_height = self.custom_footer_height();
+-                let footer_hint_height =
+-                    custom_height.unwrap_or_else(|| footer_height(&footer_props));
++                let footer_hint_height = self.footer_hint_height(popup_rect.width);
+                 let footer_spacing = Self::footer_spacing(footer_hint_height);
+                 let hint_rect = if footer_spacing > 0 && footer_hint_height > 0 {
+                     let [_, hint_rect] = Layout::vertical([
+@@ -4723,47 +4766,55 @@ impl ChatComposer {
+                 } else if let Some(line) = self.history_search_footer_line() {
+                     render_footer_line(hint_rect, buf, line);
+                 } else {
+-                    let available_width =
+-                        hint_rect.width.saturating_sub(FOOTER_INDENT_COLS as u16) as usize;
+                     let status_line_active = uses_passive_footer_status_layout(&footer_props);
+-                    let combined_status_line = if status_line_active {
+-                        passive_footer_status_line(&footer_props)
++                    let static_layout = if status_line_active {
++                        self.passive_footer_layout(hint_rect.width)
+                     } else {
+                         None
+                     };
++                    let active_footer_hint_override = self.footer.hint_override.as_ref();
++                    let has_override =
++                        self.footer.flash_visible() || active_footer_hint_override.is_some();
+                     let transition_visible = status_line_active
+-                        && !self.footer.flash_visible()
+-                        && self.footer.hint_override.is_none();
++                        && static_layout
++                            .as_ref()
++                            .is_some_and(PassiveFooterLayout::is_single_status_row)
++                        && !has_override;
+                     let transition_active = transition_visible
+                         && self
+                             .effort_status_line_transition
+                             .as_ref()
+                             .is_some_and(|transition| !transition.is_finished());
+-                    let combined_status_line = if transition_visible
++                    let animated_status = if transition_visible
+                         && let Some(transition) = &self.effort_status_line_transition
+                         && !transition.is_finished()
+                     {
+-                        transition.render_line(
+-                            combined_status_line.as_ref(),
+-                            hint_rect.width.saturating_sub(FOOTER_INDENT_COLS as u16),
+-                        )
++                        transition
++                            .render_line(
++                                static_layout
++                                    .as_ref()
++                                    .and_then(|layout| layout.lines().first()),
++                                hint_rect.width.saturating_sub(FOOTER_INDENT_COLS as u16),
++                            )
++                            .map(StatusLine::from_line)
+                     } else {
+-                        combined_status_line
++                        None
+                     };
+-                    let mut truncated_status_line = if status_line_active {
+-                        combined_status_line.as_ref().map(|line| {
+-                            truncate_line_with_ellipsis_if_overflow(line.clone(), available_width)
+-                        })
++                    let passive_layout = if let Some(status) = animated_status.as_ref() {
++                        Some(compose_passive_footer_layout(
++                            Some(status),
++                            hint_rect.width,
++                            None,
++                        ))
+                     } else {
+-                        None
++                        static_layout
+                     };
+                     let left_mode_indicator = if status_line_active {
+                         None
+                     } else {
+                         self.footer.collaboration_mode_indicator
+                     };
+-                    let active_footer_hint_override = self.footer.hint_override.as_ref();
+-                    let mut left_width = if self.footer.flash_visible() {
++                    let left_width = if self.footer.flash_visible() {
+                         self.footer
+                             .flash
+                             .as_ref()
+@@ -4772,9 +4823,11 @@ impl ChatComposer {
+                     } else if let Some(items) = active_footer_hint_override {
+                         footer_hint_items_width(items)
+                     } else if status_line_active {
+-                        truncated_status_line
++                        passive_layout
+                             .as_ref()
+-                            .map(|line| line.width() as u16)
++                            .and_then(|layout| layout.lines().last())
++                            .map(Line::width)
++                            .and_then(|width| width.try_into().ok())
+                             .unwrap_or(0)
+                     } else {
+                         footer_line_width(
+@@ -4785,40 +4838,30 @@ impl ChatComposer {
+                             show_queue_hint,
+                         )
+                     };
+-                    let right_line =
+-                        if let Some(label) = self.footer.side_conversation_context_label.as_ref() {
+-                            Some(side_conversation_context_line(label))
+-                        } else if let Some(line) = self.shell_mode_footer_line() {
+-                            Some(line)
+-                        } else if transition_active {
+-                            None
+-                        } else if status_line_active {
+-                            let full = self.mode_indicator_line(show_cycle_hint);
+-                            let compact = self.mode_indicator_line(/*show_cycle_hint*/ false);
+-                            let full_width = full.as_ref().map(|l| l.width() as u16).unwrap_or(0);
+-                            if can_show_left_with_context(hint_rect, left_width, full_width) {
+-                                full
+-                            } else {
+-                                compact
+-                            }
++                    let right_line = if status_line_active && !has_override && !transition_active {
++                        None
++                    } else if let Some(label) = self.footer.side_conversation_context_label.as_ref()
++                    {
++                        Some(side_conversation_context_line(label))
++                    } else if let Some(line) = self.shell_mode_footer_line() {
++                        Some(line)
++                    } else if transition_active {
++                        None
++                    } else if status_line_active {
++                        let full = self.mode_indicator_line(show_cycle_hint);
++                        let compact = self.mode_indicator_line(/*show_cycle_hint*/ false);
++                        let full_width = full.as_ref().map(|l| l.width() as u16).unwrap_or(0);
++                        if can_show_left_with_context(hint_rect, left_width, full_width) {
++                            full
+                         } else {
+-                            Some(self.right_footer_line_with_context())
+-                        };
++                            compact
++                        }
++                    } else {
++                        Some(self.right_footer_line_with_context())
++                    };
+                     let right_width = right_line.as_ref().map(|l| l.width() as u16).unwrap_or(0);
+-                    if status_line_active
+-                        && let Some(max_left) = max_left_width_for_right(hint_rect, right_width)
+-                        && left_width > max_left
+-                        && let Some(line) = combined_status_line.as_ref().map(|line| {
+-                            truncate_line_with_ellipsis_if_overflow(line.clone(), max_left as usize)
+-                        })
+-                    {
+-                        left_width = line.width() as u16;
+-                        truncated_status_line = Some(line);
+-                    }
+                     let can_show_left_and_context =
+                         can_show_left_with_context(hint_rect, left_width, right_width);
+-                    let has_override =
+-                        self.footer.flash_visible() || active_footer_hint_override.is_some();
+                     let single_line_layout = if has_override || status_line_active {
+                         None
+                     } else {
+@@ -4862,31 +4905,15 @@ impl ChatComposer {
+                     if let Some((summary_left, _)) = single_line_layout {
+                         match summary_left {
+                             SummaryLeft::Default => {
+-                                if status_line_active {
+-                                    if let Some(line) = truncated_status_line.clone() {
+-                                        render_footer_line(hint_rect, buf, line);
+-                                    } else {
+-                                        render_footer_from_props(
+-                                            hint_rect,
+-                                            buf,
+-                                            &footer_props,
+-                                            left_mode_indicator,
+-                                            show_cycle_hint,
+-                                            show_shortcuts_hint,
+-                                            show_queue_hint,
+-                                        );
+-                                    }
+-                                } else {
+-                                    render_footer_from_props(
+-                                        hint_rect,
+-                                        buf,
+-                                        &footer_props,
+-                                        left_mode_indicator,
+-                                        show_cycle_hint,
+-                                        show_shortcuts_hint,
+-                                        show_queue_hint,
+-                                    );
+-                                }
++                                render_footer_from_props(
++                                    hint_rect,
++                                    buf,
++                                    &footer_props,
++                                    left_mode_indicator,
++                                    show_cycle_hint,
++                                    show_shortcuts_hint,
++                                    show_queue_hint,
++                                );
+                             }
+                             SummaryLeft::Custom(line) => {
+                                 render_footer_line(hint_rect, buf, line);
+@@ -4900,8 +4927,8 @@ impl ChatComposer {
+                     } else if let Some(items) = active_footer_hint_override {
+                         render_footer_hint_items(hint_rect, buf, items);
+                     } else if status_line_active {
+-                        if let Some(line) = truncated_status_line {
+-                            render_footer_line(hint_rect, buf, line);
++                        if let Some(layout) = passive_layout.as_ref() {
++                            render_passive_footer(hint_rect, buf, layout);
+                         }
+                     } else {
+                         render_footer_from_props(
+@@ -5346,10 +5373,11 @@ mod tests {
+             /*disable_paste_burst*/ false,
+         );
+         setup(&mut composer);
+-        let footer_props = composer.footer_props();
+-        let footer_lines = footer_height(&footer_props);
++        let footer_lines = composer.footer_hint_height(width);
+         let footer_spacing = ChatComposer::footer_spacing(footer_lines);
+-        let height = footer_lines + footer_spacing + 8;
++        let height = footer_lines
++            .saturating_add(footer_spacing)
++            .saturating_add(8);
+         let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+         terminal
+             .draw(|f| composer.render(f.area(), f.buffer_mut()))
+@@ -5501,9 +5529,11 @@ mod tests {
+             /*enhanced_keys_supported*/ true,
+             |composer| {
+                 composer.set_status_line_enabled(/*enabled*/ true);
+-                composer.set_status_line(Some(Line::from(
+-                    "gpt-5.4 high fast · ~/code/codex-1 · Context 0% used",
+-                )));
++                composer.set_status_line(StatusLine::from_fields(vec![
++                    Line::from("gpt-5.4 high fast"),
++                    Line::from("~/code/codex-1"),
++                    Line::from("Context 0% used"),
++                ]));
+                 composer.set_text_content("!git status".to_string(), Vec::new(), Vec::new());
+             },
+         );
+@@ -5513,9 +5543,11 @@ mod tests {
+             /*enhanced_keys_supported*/ true,
+             |composer| {
+                 composer.set_status_line_enabled(/*enabled*/ true);
+-                composer.set_status_line(Some(Line::from(
+-                    "gpt-5.4 high fast · ~/code/codex-1 · Context 0% used",
+-                )));
++                composer.set_status_line(StatusLine::from_fields(vec![
++                    Line::from("gpt-5.4 high fast"),
++                    Line::from("~/code/codex-1"),
++                    Line::from("Context 0% used"),
++                ]));
+                 composer.set_text_content("!".to_string(), Vec::new(), Vec::new());
+                 let _ = composer.handle_key_event(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+             },
+@@ -5556,9 +5588,11 @@ mod tests {
+             /*disable_paste_burst*/ false,
+         );
+         composer.set_status_line_enabled(/*enabled*/ true);
+-        composer.set_status_line(Some(Line::from(
+-            "gpt-5.4 high fast · ~/code/codex-1 · Context 0% used",
+-        )));
++        composer.set_status_line(StatusLine::from_fields(vec![
++            Line::from("gpt-5.4 high fast"),
++            Line::from("~/code/codex-1"),
++            Line::from("Context 0% used"),
++        ]));
+         composer.set_text_content("!git status".to_string(), Vec::new(), Vec::new());
+ 
+         let area = Rect::new(0, 0, 100, 9);
+@@ -5731,24 +5765,101 @@ mod tests {
+         );
+         let url = "https://github.com/openai/codex/pull/20252";
+         composer.set_status_line_enabled(/*enabled*/ true);
+-        composer.set_status_line(Some(Line::from(Span::styled(
+-            "PR #20252",
+-            Style::default().cyan().underlined(),
+-        ))));
++        composer.set_status_line(StatusLine::from_fields(vec![
++            Line::from("long-status-field"),
++            Line::from(Span::styled(
++                "PR #20252",
++                Style::default().cyan().underlined(),
++            )),
++        ]));
+         composer.set_status_line_hyperlink(Some(url.to_string()));
+ 
+-        let area = Rect::new(0, 0, 40, 6);
++        let area = Rect::new(0, 0, 12, 8);
+         let mut buf = Buffer::empty(area);
+         composer.render(area, &mut buf);
+ 
+         let marked_cells = (area.top()..area.bottom())
+             .flat_map(|y| (area.left()..area.right()).map(move |x| (x, y)))
+             .filter(|&(x, y)| buf[(x, y)].symbol().contains(url))
+-            .count();
++            .collect::<Vec<_>>();
+         assert_eq!(
+-            marked_cells,
++            marked_cells.len(),
+             "PR #20252".chars().filter(|ch| !ch.is_whitespace()).count()
+         );
++        assert!(
++            marked_cells
++                .iter()
++                .all(|(_, y)| *y == area.bottom().saturating_sub(1)),
++            "the wrapped PR field should be linked on the final footer row"
++        );
++    }
++
++    #[test]
++    fn multiline_status_footer_reserves_every_row_snapshot() {
++        use ratatui::Terminal;
++        use ratatui::backend::TestBackend;
++
++        let (mut composer, _rx) = new_test_composer();
++        composer.set_status_line_enabled(/*enabled*/ true);
++        composer.set_collaboration_modes_enabled(/*enabled*/ true);
++        composer.set_collaboration_mode_indicator(Some(CollaborationModeIndicator::Plan));
++        composer.set_status_line(Some(StatusLine::from_line(Line::from("long-status-field"))));
++
++        let width = 12;
++        let height = composer.desired_height(width);
++        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
++        terminal
++            .draw(|f| composer.render(f.area(), f.buffer_mut()))
++            .unwrap();
++
++        insta::assert_snapshot!(
++            "multiline_status_footer_reserves_every_row",
++            terminal.backend()
++        );
++    }
++
++    #[test]
++    fn full_cycle_indicator_shares_after_whole_field_reflow_snapshot() {
++        use ratatui::Terminal;
++        use ratatui::backend::TestBackend;
++
++        let (mut composer, _rx) = new_test_composer();
++        composer.set_status_line_enabled(/*enabled*/ true);
++        composer.set_collaboration_modes_enabled(/*enabled*/ true);
++        composer.set_collaboration_mode_indicator(Some(CollaborationModeIndicator::Plan));
++        composer.set_status_line(StatusLine::from_fields(vec![
++            Line::from("aaaaaa"),
++            Line::from("bb"),
++            Line::from("cc"),
++        ]));
++
++        let width = 42;
++        let height = composer.desired_height(width);
++        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
++        terminal
++            .draw(|f| composer.render(f.area(), f.buffer_mut()))
++            .unwrap();
++        let footer_rows = (height.saturating_sub(2)..height)
++            .map(|y| {
++                (0..width)
++                    .map(|x| terminal.backend().buffer()[(x, y)].symbol())
++                    .collect::<String>()
++                    .trim_end()
++                    .to_string()
++            })
++            .collect::<Vec<_>>();
++
++        assert_eq!(
++            footer_rows,
++            vec![
++                "  aaaaaa".to_string(),
++                "  bb · cc Plan mode (shift+tab to cycle)".to_string(),
++            ]
++        );
++        insta::assert_snapshot!(
++            "full_cycle_indicator_shares_after_whole_field_reflow",
++            terminal.backend()
++        );
+     }
+ 
+     #[test]
+diff --git a/codex-rs/tui/src/bottom_pane/chat_composer/agents_navigation_tests.rs b/codex-rs/tui/src/bottom_pane/chat_composer/agents_navigation_tests.rs
+index 59bc80a59e..1319247b17 100644
+--- a/codex-rs/tui/src/bottom_pane/chat_composer/agents_navigation_tests.rs
++++ b/codex-rs/tui/src/bottom_pane/chat_composer/agents_navigation_tests.rs
+@@ -70,7 +70,9 @@ fn agents_navigation_hint_snapshots() {
+                     }
+                     "agents_navigation_status" => {
+                         composer.set_status_line_enabled(/*enabled*/ true);
+-                        composer.set_status_line(Some(Line::from("model · project")));
++                        composer.set_status_line(Some(StatusLine::from_line(Line::from(
++                            "model · project",
++                        ))));
+                     }
+                     _ => {}
+                 }
+diff --git a/codex-rs/tui/src/bottom_pane/chat_composer/footer_state.rs b/codex-rs/tui/src/bottom_pane/chat_composer/footer_state.rs
+index 09ceb5fc68..779886bb53 100644
+--- a/codex-rs/tui/src/bottom_pane/chat_composer/footer_state.rs
++++ b/codex-rs/tui/src/bottom_pane/chat_composer/footer_state.rs
+@@ -4,6 +4,7 @@ use std::time::Instant;
+ 
+ use ratatui::text::Line;
+ 
++use crate::bottom_pane::StatusLine;
+ use crate::bottom_pane::footer::CollaborationModeIndicator;
+ use crate::bottom_pane::footer::FooterMode;
+ use crate::bottom_pane::footer::GoalStatusIndicator;
+@@ -26,7 +27,7 @@ pub(super) struct FooterState {
+     pub(super) collaboration_mode_indicator: Option<CollaborationModeIndicator>,
+     pub(super) goal_status_indicator: Option<GoalStatusIndicator>,
+     pub(super) ide_context_active: bool,
+-    pub(super) status_line_value: Option<Line<'static>>,
++    pub(super) status_line_value: Option<StatusLine>,
+     pub(super) status_line_hyperlink_url: Option<String>,
+     pub(super) status_line_enabled: bool,
+     pub(super) side_conversation_context_label: Option<String>,
+@@ -64,11 +65,6 @@ impl FooterState {
+ 
+     #[cfg(test)]
+     pub(super) fn status_line_text(&self) -> Option<String> {
+-        self.status_line_value.as_ref().map(|line| {
+-            line.spans
+-                .iter()
+-                .map(|span| span.content.as_ref())
+-                .collect::<String>()
+-        })
++        self.status_line_value.as_ref().map(StatusLine::text)
+     }
+ }
+diff --git a/codex-rs/tui/src/bottom_pane/chat_composer/history_search.rs b/codex-rs/tui/src/bottom_pane/chat_composer/history_search.rs
+index 9072f9d4b6..d98ac63c4f 100644
+--- a/codex-rs/tui/src/bottom_pane/chat_composer/history_search.rs
++++ b/codex-rs/tui/src/bottom_pane/chat_composer/history_search.rs
+@@ -33,7 +33,6 @@ use ratatui::text::Span;
+ 
+ use super::super::chat_composer_history::HistorySearchDirection;
+ use super::super::chat_composer_history::HistorySearchResult;
+-use super::super::footer::footer_height;
+ use super::super::footer::reset_mode_after_activity;
+ use super::super::textarea::VimPersistentState;
+ use super::ActivePopup;
+@@ -469,10 +468,7 @@ impl ChatComposer {
+             return None;
+         }
+ 
+-        let footer_props = self.footer_props();
+-        let footer_hint_height = self
+-            .custom_footer_height()
+-            .unwrap_or_else(|| footer_height(&footer_props));
++        let footer_hint_height = self.footer_hint_height(area.width);
+         let footer_spacing = Self::footer_spacing(footer_hint_height);
+         let hint_rect = if footer_spacing > 0 && footer_hint_height > 0 {
+             let [_, hint_rect] = Layout::vertical([
+diff --git a/codex-rs/tui/src/bottom_pane/chat_composer_effort_tests.rs b/codex-rs/tui/src/bottom_pane/chat_composer_effort_tests.rs
+index aaae8c2d4f..6d06551db3 100644
+--- a/codex-rs/tui/src/bottom_pane/chat_composer_effort_tests.rs
++++ b/codex-rs/tui/src/bottom_pane/chat_composer_effort_tests.rs
+@@ -7,7 +7,10 @@ use pretty_assertions::assert_eq;
+ fn effort_composer_baseline_repeat_and_lowering_do_not_replay() {
+     let (mut composer, _rx) = new_test_composer();
+     composer.set_status_line_enabled(/*enabled*/ true);
+-    composer.set_status_line(Some(Line::from("gpt-5.4 high · main")));
++    composer.set_status_line(StatusLine::from_fields(vec![
++        Line::from("gpt-5.4 high"),
++        Line::from("main"),
++    ]));
+     assert!(composer.set_active_reasoning_effort(
+         Some(&ReasoningEffort::Ultra),
+         /*animations_enabled*/ true,
+@@ -43,7 +46,10 @@ fn effort_composer_baseline_repeat_and_lowering_do_not_replay() {
+ fn effort_transition_does_not_queue_a_missing_outgoing_status_line() {
+     let (mut composer, _rx) = new_test_composer();
+     composer.set_status_line_enabled(/*enabled*/ true);
+-    composer.set_status_line(Some(Line::from("gpt-5.4 high · main")));
++    composer.set_status_line(StatusLine::from_fields(vec![
++        Line::from("gpt-5.4 high"),
++        Line::from("main"),
++    ]));
+     composer.set_task_running(/*running*/ true);
+     composer.set_text_content("queued draft".to_string(), Vec::new(), Vec::new());
+     composer.set_active_reasoning_effort(
+@@ -63,7 +69,10 @@ fn effort_transition_does_not_queue_a_missing_outgoing_status_line() {
+ fn effort_composer_restored_baseline_and_reduced_motion_do_not_start() {
+     let (mut composer, _rx) = new_test_composer();
+     composer.set_status_line_enabled(/*enabled*/ true);
+-    composer.set_status_line(Some(Line::from("gpt-5.4 high · main")));
++    composer.set_status_line(StatusLine::from_fields(vec![
++        Line::from("gpt-5.4 high"),
++        Line::from("main"),
++    ]));
+     composer.set_active_reasoning_effort(
+         Some(&ReasoningEffort::High),
+         /*animations_enabled*/ false,
+@@ -99,7 +108,10 @@ fn effort_composer_restored_baseline_and_reduced_motion_do_not_start() {
+ fn effort_transition_never_replaces_a_footer_flash() {
+     let (mut composer, _rx) = new_test_composer();
+     composer.set_status_line_enabled(/*enabled*/ true);
+-    composer.set_status_line(Some(Line::from("gpt-5.4 high · main")));
++    composer.set_status_line(StatusLine::from_fields(vec![
++        Line::from("gpt-5.4 high"),
++        Line::from("main"),
++    ]));
+     composer.set_active_reasoning_effort(
+         Some(&ReasoningEffort::High),
+         /*animations_enabled*/ true,
+@@ -108,7 +120,10 @@ fn effort_transition_never_replaces_a_footer_flash() {
+         Some(&ReasoningEffort::Ultra),
+         /*animations_enabled*/ true,
+     );
+-    composer.set_status_line(Some(Line::from("gpt-5.4 ultra · main")));
++    composer.set_status_line(StatusLine::from_fields(vec![
++        Line::from("gpt-5.4 ultra"),
++        Line::from("main"),
++    ]));
+     composer
+         .footer
+         .show_flash(Line::from("saved"), Duration::from_secs(/*secs*/ 1));
+@@ -132,7 +147,10 @@ fn effort_transition_keeps_the_full_footer_row() {
+     composer.set_status_line_enabled(/*enabled*/ true);
+     composer.set_collaboration_modes_enabled(/*enabled*/ true);
+     composer.set_collaboration_mode_indicator(Some(CollaborationModeIndicator::Plan));
+-    composer.set_status_line(Some(Line::from("gpt-5.4 high · feature-branch")));
++    composer.set_status_line(StatusLine::from_fields(vec![
++        Line::from("gpt-5.4 high"),
++        Line::from("feature-branch"),
++    ]));
+     composer.set_active_reasoning_effort(
+         Some(&ReasoningEffort::High),
+         /*animations_enabled*/ true,
+@@ -143,7 +161,7 @@ fn effort_transition_keeps_the_full_footer_row() {
+     );
+ 
+     let area = Rect::new(
+-        /*x*/ 0, /*y*/ 0, /*width*/ 36, /*height*/ 6,
++        /*x*/ 0, /*y*/ 0, /*width*/ 64, /*height*/ 6,
+     );
+     let mut buf = Buffer::empty(area);
+     composer.render(area, &mut buf);
+@@ -156,6 +174,86 @@ fn effort_transition_keeps_the_full_footer_row() {
+     insta::assert_snapshot!("effort_transition_keeps_the_full_footer_row", footer);
+ }
+ 
++#[test]
++fn effort_transition_is_bypassed_for_a_multiline_footer() {
++    let (mut composer, _rx) = new_test_composer();
++    composer.set_status_line_enabled(/*enabled*/ true);
++    composer.set_collaboration_modes_enabled(/*enabled*/ true);
++    composer.set_collaboration_mode_indicator(Some(CollaborationModeIndicator::Plan));
++    composer.set_status_line(StatusLine::from_fields(vec![
++        Line::from("gpt-5.4 high"),
++        Line::from("feature-branch"),
++    ]));
++    composer.set_active_reasoning_effort(
++        Some(&ReasoningEffort::High),
++        /*animations_enabled*/ true,
++    );
++    composer.set_active_reasoning_effort(
++        Some(&ReasoningEffort::Ultra),
++        /*animations_enabled*/ true,
++    );
++
++    let width = 28;
++    assert_eq!(composer.footer_hint_height(width), 2);
++    let area = Rect::new(
++        /*x*/ 0,
++        /*y*/ 0,
++        width,
++        composer.desired_height(width),
++    );
++    let mut buf = Buffer::empty(area);
++    composer.render(area, &mut buf);
++    let mut screen = String::new();
++    for y in area.top()..area.bottom() {
++        for x in area.left()..area.right() {
++            screen.push_str(buf[(x, y)].symbol());
++        }
++    }
++
++    assert!(screen.contains("gpt-5.4 high"));
++    assert!(screen.contains("feature-branch"));
++    assert!(screen.contains("Plan mode"));
++}
++
++#[test]
++fn effort_transition_bypasses_multiline_current_status_fields() {
++    let (mut composer, _rx) = new_test_composer();
++    composer.set_status_line_enabled(/*enabled*/ true);
++    composer.set_status_line(StatusLine::from_fields(vec![
++        Line::from("gpt-5.4 ultra"),
++        Line::from("feature-branch"),
++        Line::from("Context 70% used"),
++    ]));
++    composer.set_active_reasoning_effort(
++        Some(&ReasoningEffort::Max),
++        /*animations_enabled*/ true,
++    );
++    composer.set_active_reasoning_effort(
++        Some(&ReasoningEffort::Ultra),
++        /*animations_enabled*/ true,
++    );
++
++    let area = Rect::new(
++        /*x*/ 0, /*y*/ 0, /*width*/ 24, /*height*/ 9,
++    );
++    let mut buf = Buffer::empty(area);
++    composer.render(area, &mut buf);
++    let rendered = (area.top()..area.bottom())
++        .map(|y| {
++            (area.left()..area.right())
++                .map(|x| buf[(x, y)].symbol())
++                .collect::<String>()
++        })
++        .collect::<Vec<_>>()
++        .join("\n");
++
++    assert!(rendered.contains("gpt-5.4 ultra"));
++    assert!(rendered.contains("feature-branch"));
++    assert!(rendered.contains("Context 70% used"));
++    assert!(!rendered.contains("M A X"));
++    assert!(!rendered.contains("U L T R A"));
++}
++
+ #[test]
+ fn ultra_accent_upgrades_prompt_glyph() {
+     snapshot_composer_state_with_width(
+diff --git a/codex-rs/tui/src/bottom_pane/footer.rs b/codex-rs/tui/src/bottom_pane/footer.rs
+index ab4366e74a..0a81ff8445 100644
+--- a/codex-rs/tui/src/bottom_pane/footer.rs
++++ b/codex-rs/tui/src/bottom_pane/footer.rs
+@@ -41,6 +41,7 @@
+ //! In short: `single_line_footer_layout` chooses *what* best fits, and the two
+ //! render helpers choose whether to draw the chosen line or the default
+ //! `FooterProps` mapping.
++use crate::bottom_pane::StatusLine;
+ use crate::key_hint;
+ use crate::key_hint::KeyBinding;
+ use crate::key_hint::ShortcutHint;
+@@ -76,14 +77,15 @@ pub(crate) struct FooterProps {
+     ///
+     /// This is rendered when `mode` is `FooterMode::QuitShortcutReminder`.
+     pub(crate) quit_shortcut_key: KeyBinding,
+-    pub(crate) status_line_value: Option<Line<'static>>,
++    pub(crate) status_line_value: Option<StatusLine>,
+     pub(crate) status_line_enabled: bool,
+     pub(crate) key_hints: FooterKeyHints,
+     /// Active thread label shown when the footer is rendering contextual information instead of an
+     /// instructional hint.
+     ///
+-    /// When both this label and the configured status line are available, they are rendered on the
+-    /// same row separated by ` · `.
++    /// When both this label and the configured status line are available, the label is appended as
++    /// the last ordered status field. Adjacent fields share a row with a ` · ` separator only when
++    /// the current width permits; otherwise the label wraps at the field boundary.
+     pub(crate) active_agent_label: Option<String>,
+ }
+ 
+@@ -257,6 +259,112 @@ pub(crate) fn render_footer_line(area: Rect, buf: &mut Buffer, line: Line<'stati
+     .render(area, buf);
+ }
+ 
++#[derive(Clone, Debug, Eq, PartialEq)]
++pub(crate) struct PassiveFooterLayout {
++    lines: Vec<Line<'static>>,
++    right_indicator: Option<Line<'static>>,
++}
++
++impl PassiveFooterLayout {
++    pub(crate) fn height(&self) -> u16 {
++        self.lines.len().try_into().unwrap_or(u16::MAX)
++    }
++
++    pub(crate) fn lines(&self) -> &[Line<'static>] {
++        &self.lines
++    }
++
++    pub(crate) fn is_single_status_row(&self) -> bool {
++        self.lines.len() == 1
++    }
++
++    #[cfg(test)]
++    fn plain_lines(&self) -> Vec<String> {
++        self.lines
++            .iter()
++            .map(|line| {
++                line.spans
++                    .iter()
++                    .map(|span| span.content.as_ref())
++                    .collect()
++            })
++            .collect()
++    }
++}
++
++pub(crate) fn passive_footer_layout(
++    status: Option<&StatusLine>,
++    area_width: u16,
++    right_indicator: Option<Line<'static>>,
++) -> PassiveFooterLayout {
++    let full_width = area_width.saturating_sub(FOOTER_INDENT_COLS as u16);
++    let mut lines = status
++        .map(|status| status.layout(usize::from(full_width)))
++        .unwrap_or_default();
++    if lines.is_empty() {
++        lines.push(Line::default());
++    }
++
++    if let Some(indicator) = right_indicator.as_ref() {
++        let area = Rect::new(/*x*/ 0, /*y*/ 0, area_width, /*height*/ 1);
++        let final_width = lines
++            .last()
++            .map(Line::width)
++            .and_then(|width| width.try_into().ok())
++            .unwrap_or(u16::MAX);
++        let indicator_width = indicator.width().try_into().unwrap_or(u16::MAX);
++        if !can_show_left_with_context(area, final_width, indicator_width) {
++            let reflowed = status.and_then(|status| {
++                let max_left = max_left_width_for_right(area, indicator_width)?;
++                status.layout_with_last_width(usize::from(full_width), usize::from(max_left))
++            });
++            if let Some(reflowed) = reflowed {
++                lines = reflowed;
++            } else {
++                lines.push(Line::default());
++            }
++        }
++    }
++
++    PassiveFooterLayout {
++        lines,
++        right_indicator,
++    }
++}
++
++pub(crate) fn passive_footer_layout_with_indicator_fallback(
++    status: Option<&StatusLine>,
++    area_width: u16,
++    full_indicator: Option<Line<'static>>,
++    compact_indicator: Option<Line<'static>>,
++) -> PassiveFooterLayout {
++    let has_full_indicator = full_indicator.is_some();
++    let full_layout = passive_footer_layout(status, area_width, full_indicator);
++    let full_requires_dedicated_row = has_full_indicator
++        && full_layout.lines().len() > 1
++        && full_layout
++            .lines()
++            .last()
++            .is_some_and(|line| line.width() == 0);
++    if full_requires_dedicated_row {
++        passive_footer_layout(status, area_width, compact_indicator)
++    } else {
++        full_layout
++    }
++}
++
++pub(crate) fn render_passive_footer(area: Rect, buf: &mut Buffer, layout: &PassiveFooterLayout) {
++    Paragraph::new(prefix_lines(
++        layout.lines().to_vec(),
++        " ".repeat(FOOTER_INDENT_COLS).into(),
++        " ".repeat(FOOTER_INDENT_COLS).into(),
++    ))
++    .render(area, buf);
++    if let Some(indicator) = layout.right_indicator.as_ref() {
++        render_context_right(area, buf, indicator);
++    }
++}
++
+ /// Render footer content directly from `FooterProps`.
+ ///
+ /// This is intentionally not part of the width-based collapse/fallback logic.
+@@ -645,16 +753,17 @@ fn right_aligned_x(area: Rect, content_width: u16) -> Option<u16> {
+ 
+ pub(crate) fn max_left_width_for_right(area: Rect, right_width: u16) -> Option<u16> {
+     let context_x = right_aligned_x(area, right_width)?;
+-    let left_start = area.x + FOOTER_INDENT_COLS as u16;
++    let left_start = area.x.saturating_add(FOOTER_INDENT_COLS as u16);
+ 
+     // minimal one column gap between left and right
+     let gap = FOOTER_CONTEXT_GAP_COLS;
++    let minimum_context_x = left_start.saturating_add(gap);
+ 
+-    if context_x <= left_start + gap {
++    if context_x <= minimum_context_x {
+         return Some(0);
+     }
+ 
+-    Some(context_x.saturating_sub(left_start + gap))
++    Some(context_x.saturating_sub(minimum_context_x))
+ }
+ 
+ pub(crate) fn can_show_left_with_context(area: Rect, left_width: u16, context_width: u16) -> bool {
+@@ -664,7 +773,9 @@ pub(crate) fn can_show_left_with_context(area: Rect, left_width: u16, context_wi
+     if left_width == 0 {
+         return true;
+     }
+-    let left_extent = FOOTER_INDENT_COLS as u16 + left_width + FOOTER_CONTEXT_GAP_COLS;
++    let left_extent = (FOOTER_INDENT_COLS as u16)
++        .saturating_add(left_width)
++        .saturating_add(FOOTER_CONTEXT_GAP_COLS);
+     left_extent <= context_x.saturating_sub(area.x)
+ }
+ 
+@@ -727,10 +838,8 @@ fn footer_from_props_lines(
+     show_queue_hint: bool,
+ ) -> Vec<Line<'static>> {
+     let key_hints = props.key_hints;
+-    // Passive footer context can come from the configurable status line, the
+-    // active agent label, or both combined.
+-    if let Some(status_line) = passive_footer_status_line(props) {
+-        return vec![status_line];
++    if let Some(status) = passive_footer_status(props) {
++        return status.layout(usize::MAX);
+     }
+     match props.mode {
+         FooterMode::QuitShortcutReminder => {
+@@ -785,39 +894,34 @@ fn footer_from_props_lines(
+     }
+ }
+ 
+-/// Returns the contextual footer row when the footer is not busy showing an instructional hint.
+-///
+-/// The returned line may contain the configured status line, the currently viewed agent label, or
+-/// both combined. Active instructional states such as quit reminders, shortcut overlays, and queue
+-/// prompts deliberately return `None` so those call-to-action hints stay visible.
+-pub(crate) fn passive_footer_status_line(props: &FooterProps) -> Option<Line<'static>> {
++/// Returns the contextual footer status when the footer is not busy showing an instructional hint.
++pub(crate) fn passive_footer_status(props: &FooterProps) -> Option<StatusLine> {
+     if !shows_passive_footer_line(props) {
+         return None;
+     }
+ 
+-    let mut line = if props.status_line_enabled {
++    let mut status = if props.status_line_enabled {
+         props.status_line_value.clone()
+     } else {
+         None
+     };
+-
+-    if let Some(active_agent_label) = props.active_agent_label.as_ref() {
+-        if let Some(existing) = line.as_mut() {
+-            existing.spans.push(" · ".dim());
+-            existing.spans.push(active_agent_label.clone().dim());
++    if let Some(label) = props.active_agent_label.as_ref() {
++        let field = Line::from(label.clone()).dim();
++        if let Some(status) = status.as_mut() {
++            status.push_field(field);
+         } else {
+-            line = Some(Line::from(active_agent_label.clone()).dim());
++            status = StatusLine::from_fields(vec![field]);
+         }
+     }
+-
+     if props.mode == FooterMode::ComposerEmpty
+         && let Some(key) = props.key_hints.agents
+-        && let Some(line) = line.as_mut()
++        && let Some(status) = status.as_mut()
+     {
+-        line.extend(vec![" · ".dim(), key.into(), " for agents".dim()]);
++        let field = vec![key.into(), " for agents".dim()].into();
++        status.push_field(field);
+     }
+ 
+-    line
++    status
+ }
+ 
+ /// Whether the current footer mode allows contextual information to replace instructional hints.
+@@ -1305,7 +1409,6 @@ const SHORTCUTS: &[ShortcutDescriptor] = &[
+ #[cfg(test)]
+ mod tests {
+     use super::*;
+-    use crate::line_truncation::truncate_line_with_ellipsis_if_overflow;
+     use crate::test_backend::VT100Backend;
+     use insta::assert_snapshot;
+     use pretty_assertions::assert_eq;
+@@ -1334,6 +1437,71 @@ mod tests {
+         );
+     }
+ 
++    fn snapshot_passive_footer(name: &str, width: u16, status: &StatusLine) {
++        let layout = passive_footer_layout(Some(status), width, None);
++        let height = layout.height().max(1);
++        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
++        terminal
++            .draw(|frame| {
++                render_passive_footer(
++                    Rect::new(0, 0, frame.area().width, height),
++                    frame.buffer_mut(),
++                    &layout,
++                );
++            })
++            .unwrap();
++        assert_snapshot!(name, terminal.backend());
++    }
++
++    fn passive_footer_layout_for_test(
++        props: &FooterProps,
++        area_width: u16,
++        collaboration_mode_indicator: Option<CollaborationModeIndicator>,
++        ide_context_active: bool,
++    ) -> Option<PassiveFooterLayout> {
++        if !uses_passive_footer_status_layout(props) {
++            return None;
++        }
++
++        let status = passive_footer_status(props);
++        let full = status_line_right_indicator_line(
++            collaboration_mode_indicator,
++            /*goal_status_indicator*/ None,
++            ide_context_active,
++            /*show_cycle_hint*/ !props.is_task_running,
++        );
++        let compact = status_line_right_indicator_line(
++            collaboration_mode_indicator,
++            /*goal_status_indicator*/ None,
++            ide_context_active,
++            /*show_cycle_hint*/ false,
++        );
++
++        Some(passive_footer_layout_with_indicator_fallback(
++            status.as_ref(),
++            area_width,
++            full,
++            compact,
++        ))
++    }
++
++    fn footer_height_for_test(
++        props: &FooterProps,
++        area_width: u16,
++        collaboration_mode_indicator: Option<CollaborationModeIndicator>,
++        ide_context_active: bool,
++    ) -> u16 {
++        passive_footer_layout_for_test(
++            props,
++            area_width,
++            collaboration_mode_indicator,
++            ide_context_active,
++        )
++        .map(|layout| layout.height())
++        .unwrap_or_else(|| footer_height(props))
++        .max(1)
++    }
++
+     fn draw_footer_frame<B: Backend>(
+         terminal: &mut Terminal<B>,
+         height: u16,
+@@ -1362,129 +1530,69 @@ mod tests {
+                     | FooterMode::ShortcutOverlay
+                     | FooterMode::EscHint => false,
+                 };
+-                let status_line_active = uses_passive_footer_status_layout(props);
+-                let passive_status_line = if status_line_active {
+-                    passive_footer_status_line(props)
+-                } else {
+-                    None
+-                };
+-                let left_mode_indicator = if status_line_active {
+-                    None
+-                } else {
+-                    collaboration_mode_indicator
+-                };
+-                let available_width = area.width.saturating_sub(FOOTER_INDENT_COLS as u16) as usize;
+-                let mut truncated_status_line = if status_line_active
+-                    && matches!(
+-                        props.mode,
+-                        FooterMode::ComposerEmpty | FooterMode::ComposerHasDraft
+-                    ) {
+-                    passive_status_line.as_ref().map(|line| {
+-                        truncate_line_with_ellipsis_if_overflow(line.clone(), available_width)
+-                    })
+-                } else {
+-                    None
+-                };
+-                let mut left_width = if status_line_active {
+-                    truncated_status_line
+-                        .as_ref()
+-                        .map(|line| line.width() as u16)
+-                        .unwrap_or(0)
+-                } else {
+-                    footer_line_width(
+-                        props,
+-                        left_mode_indicator,
+-                        show_cycle_hint,
+-                        show_shortcuts_hint,
+-                        show_queue_hint,
+-                    )
+-                };
+-                let right_line = if status_line_active {
+-                    let full = status_line_right_indicator_line(
+-                        collaboration_mode_indicator,
+-                        /*goal_status_indicator*/ None,
+-                        ide_context_active,
+-                        show_cycle_hint,
+-                    );
+-                    let compact = status_line_right_indicator_line(
+-                        collaboration_mode_indicator,
+-                        /*goal_status_indicator*/ None,
+-                        ide_context_active,
+-                        /*show_cycle_hint*/ false,
+-                    );
+-                    let full_width = full.as_ref().map(|line| line.width() as u16).unwrap_or(0);
+-                    if can_show_left_with_context(area, left_width, full_width) {
+-                        full
+-                    } else {
+-                        compact
+-                    }
+-                } else {
+-                    Some(context_line.clone())
+-                };
++                if let Some(layout) = passive_footer_layout_for_test(
++                    props,
++                    area.width,
++                    collaboration_mode_indicator,
++                    ide_context_active,
++                ) {
++                    render_passive_footer(area, f.buffer_mut(), &layout);
++                    return;
++                }
++
++                let left_width = footer_line_width(
++                    props,
++                    collaboration_mode_indicator,
++                    show_cycle_hint,
++                    show_shortcuts_hint,
++                    show_queue_hint,
++                );
++                let right_line = Some(context_line.clone());
+                 let right_width = right_line
+                     .as_ref()
+                     .map(|line| line.width() as u16)
+                     .unwrap_or(0);
+-                if status_line_active
+-                    && let Some(max_left) = max_left_width_for_right(area, right_width)
+-                    && left_width > max_left
+-                    && let Some(line) = passive_status_line.as_ref().map(|line| {
+-                        truncate_line_with_ellipsis_if_overflow(line.clone(), max_left as usize)
+-                    })
+-                {
+-                    left_width = line.width() as u16;
+-                    truncated_status_line = Some(line);
+-                }
+                 let can_show_left_and_context =
+                     can_show_left_with_context(area, left_width, right_width);
+                 if matches!(
+                     props.mode,
+                     FooterMode::ComposerEmpty | FooterMode::ComposerHasDraft
+                 ) {
+-                    if status_line_active {
+-                        if let Some(line) = truncated_status_line.clone() {
+-                            render_footer_line(area, f.buffer_mut(), line);
+-                        }
+-                        if can_show_left_and_context && let Some(line) = &right_line {
+-                            render_context_right(area, f.buffer_mut(), line);
+-                        }
+-                    } else {
+-                        let (summary_left, show_context) = single_line_footer_layout(
+-                            area,
+-                            right_width,
+-                            left_mode_indicator,
+-                            show_cycle_hint,
+-                            show_shortcuts_hint,
+-                            show_queue_hint,
+-                            props.key_hints,
+-                        );
+-                        match summary_left {
+-                            SummaryLeft::Default => {
+-                                render_footer_from_props(
+-                                    area,
+-                                    f.buffer_mut(),
+-                                    props,
+-                                    left_mode_indicator,
+-                                    show_cycle_hint,
+-                                    show_shortcuts_hint,
+-                                    show_queue_hint,
+-                                );
+-                            }
+-                            SummaryLeft::Custom(line) => {
+-                                render_footer_line(area, f.buffer_mut(), line);
+-                            }
+-                            SummaryLeft::None => {}
++                    let (summary_left, show_context) = single_line_footer_layout(
++                        area,
++                        right_width,
++                        collaboration_mode_indicator,
++                        show_cycle_hint,
++                        show_shortcuts_hint,
++                        show_queue_hint,
++                        props.key_hints,
++                    );
++                    match summary_left {
++                        SummaryLeft::Default => {
++                            render_footer_from_props(
++                                area,
++                                f.buffer_mut(),
++                                props,
++                                collaboration_mode_indicator,
++                                show_cycle_hint,
++                                show_shortcuts_hint,
++                                show_queue_hint,
++                            );
+                         }
+-                        if show_context && let Some(line) = &right_line {
+-                            render_context_right(area, f.buffer_mut(), line);
++                        SummaryLeft::Custom(line) => {
++                            render_footer_line(area, f.buffer_mut(), line);
+                         }
++                        SummaryLeft::None => {}
++                    }
++                    if show_context && let Some(line) = &right_line {
++                        render_context_right(area, f.buffer_mut(), line);
+                     }
+                 } else {
+                     render_footer_from_props(
+                         area,
+                         f.buffer_mut(),
+                         props,
+-                        left_mode_indicator,
++                        collaboration_mode_indicator,
+                         show_cycle_hint,
+                         show_shortcuts_hint,
+                         show_queue_hint,
+@@ -1527,7 +1635,12 @@ mod tests {
+         collaboration_mode_indicator: Option<CollaborationModeIndicator>,
+         context_line: Line<'static>,
+     ) {
+-        let height = footer_height(props).max(1);
++        let height = footer_height_for_test(
++            props,
++            width,
++            collaboration_mode_indicator,
++            /*ide_context_active*/ false,
++        );
+         let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+         draw_footer_frame(
+             &mut terminal,
+@@ -1546,7 +1659,12 @@ mod tests {
+         collaboration_mode_indicator: Option<CollaborationModeIndicator>,
+         context_line: Line<'static>,
+     ) -> String {
+-        let height = footer_height(props).max(1);
++        let height = footer_height_for_test(
++            props,
++            width,
++            collaboration_mode_indicator,
++            /*ide_context_active*/ false,
++        );
+         let mut terminal = Terminal::new(VT100Backend::new(width, height)).expect("terminal");
+         draw_footer_frame(
+             &mut terminal,
+@@ -1566,7 +1684,12 @@ mod tests {
+         collaboration_mode_indicator: Option<CollaborationModeIndicator>,
+         ide_context_active: bool,
+     ) {
+-        let height = footer_height(props).max(1);
++        let height = footer_height_for_test(
++            props,
++            width,
++            collaboration_mode_indicator,
++            ide_context_active,
++        );
+         let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+         draw_footer_frame(
+             &mut terminal,
+@@ -1579,6 +1702,112 @@ mod tests {
+         assert_snapshot!(name, terminal.backend());
+     }
+ 
++    #[test]
++    fn maximum_footer_geometry_saturates_without_allowing_overlap() {
++        let area = Rect::new(/*x*/ 0, /*y*/ 0, u16::MAX, /*height*/ 1);
++
++        assert_eq!(
++            (
++                max_left_width_for_right(area, /*right_width*/ 1),
++                can_show_left_with_context(area, u16::MAX, /*context_width*/ 1),
++            ),
++            (Some(u16::MAX - 6), false)
++        );
++    }
++
++    #[test]
++    fn passive_statusline_uses_two_rows_without_splitting_fields() {
++        let status = StatusLine::from_fields(vec![
++            Line::from("model"),
++            Line::from("feature-branch"),
++            Line::from("Context 70% used"),
++        ])
++        .expect("status line");
++
++        let layout = passive_footer_layout(Some(&status), /*area_width*/ 28, None);
++
++        assert_eq!(
++            layout,
++            PassiveFooterLayout {
++                lines: vec![
++                    Line::from(vec!["model".into(), " · ".dim(), "feature-branch".into(),]),
++                    Line::from("Context 70% used"),
++                ],
++                right_indicator: None,
++            }
++        );
++        assert_eq!(
++            layout.plain_lines(),
++            vec!["model · feature-branch", "Context 70% used"]
++        );
++    }
++
++    #[test]
++    fn right_indicator_gets_a_dedicated_row_when_no_status_field_can_share() {
++        let status =
++            StatusLine::from_fields(vec![Line::from("long-status-field")]).expect("status line");
++
++        let layout = passive_footer_layout(
++            Some(&status),
++            /*area_width*/ 12,
++            Some(Line::from("Plan mode")),
++        );
++
++        assert_eq!(
++            layout,
++            PassiveFooterLayout {
++                lines: vec![
++                    Line::from("long-statu"),
++                    Line::from("s-field"),
++                    Line::default(),
++                ],
++                right_indicator: Some(Line::from("Plan mode")),
++            }
++        );
++        assert_eq!(layout.plain_lines(), vec!["long-statu", "s-field", ""]);
++    }
++
++    #[test]
++    fn right_indicator_shares_reflowed_final_status_row() {
++        let status = StatusLine::from_fields(vec![
++            Line::from("aaaaaa"),
++            Line::from("bb"),
++            Line::from("cc"),
++        ])
++        .expect("status line");
++
++        let layout = passive_footer_layout(
++            Some(&status),
++            /*area_width*/ 12,
++            Some(Line::from("Right")),
++        );
++
++        assert_eq!(
++            layout,
++            PassiveFooterLayout {
++                lines: vec![Line::from("aaaaaa"), Line::from("bb"), Line::from("cc"),],
++                right_indicator: Some(Line::from("Right")),
++            }
++        );
++        assert_eq!(layout.plain_lines(), vec!["aaaaaa", "bb", "cc"]);
++    }
++
++    #[test]
++    fn passive_statusline_exactly_two_rendered_rows_snapshot() {
++        let status = StatusLine::from_fields(vec![
++            Line::from("model"),
++            Line::from("feature-branch"),
++            Line::from("Context 70% used"),
++        ])
++        .expect("status line");
++
++        snapshot_passive_footer(
++            "footer_status_line_exactly_two_rows",
++            /*width*/ 28,
++            &status,
++        );
++    }
++
+     #[test]
+     fn footer_snapshots() {
+         snapshot_footer(
+@@ -1846,7 +2075,9 @@ mod tests {
+             collaboration_modes_enabled: false,
+             is_wsl: false,
+             quit_shortcut_key: key_hint::ctrl(KeyCode::Char('c')),
+-            status_line_value: Some(Line::from("Status line content".to_string())),
++            status_line_value: Some(StatusLine::from_line(Line::from(
++                "Status line content".to_string(),
++            ))),
+             status_line_enabled: true,
+             key_hints: FooterKeyHints::default_bindings(),
+             active_agent_label: None,
+@@ -1863,7 +2094,9 @@ mod tests {
+             collaboration_modes_enabled: false,
+             is_wsl: false,
+             quit_shortcut_key: key_hint::ctrl(KeyCode::Char('c')),
+-            status_line_value: Some(Line::from("Status line content".to_string())),
++            status_line_value: Some(StatusLine::from_line(Line::from(
++                "Status line content".to_string(),
++            ))),
+             status_line_enabled: true,
+             key_hints: FooterKeyHints::default_bindings(),
+             active_agent_label: None,
+@@ -1880,7 +2113,9 @@ mod tests {
+             collaboration_modes_enabled: false,
+             is_wsl: false,
+             quit_shortcut_key: key_hint::ctrl(KeyCode::Char('c')),
+-            status_line_value: Some(Line::from("Status line content".to_string())),
++            status_line_value: Some(StatusLine::from_line(Line::from(
++                "Status line content".to_string(),
++            ))),
+             status_line_enabled: true,
+             key_hints: FooterKeyHints::default_bindings(),
+             active_agent_label: None,
+@@ -1975,16 +2210,18 @@ mod tests {
+             collaboration_modes_enabled: true,
+             is_wsl: false,
+             quit_shortcut_key: key_hint::ctrl(KeyCode::Char('c')),
+-            status_line_value: Some(Line::from(
+-                "Status line content that should truncate before the mode indicator".to_string(),
+-            )),
++            status_line_value: StatusLine::from_fields(vec![
++                Line::from("Status line content"),
++                Line::from("that should wrap"),
++                Line::from("before the mode indicator"),
++            ]),
+             status_line_enabled: true,
+             key_hints: FooterKeyHints::default_bindings(),
+             active_agent_label: None,
+         };
+ 
+         snapshot_footer_with_mode_indicator_and_context(
+-            "footer_status_line_truncated_with_gap",
++            "footer_status_line_wraps_with_gap",
+             /*width*/ 40,
+             &props,
+             Some(CollaborationModeIndicator::Plan),
+@@ -2017,7 +2254,9 @@ mod tests {
+             collaboration_modes_enabled: false,
+             is_wsl: false,
+             quit_shortcut_key: key_hint::ctrl(KeyCode::Char('c')),
+-            status_line_value: Some(Line::from("Status line content".to_string())),
++            status_line_value: Some(StatusLine::from_line(Line::from(
++                "Status line content".to_string(),
++            ))),
+             status_line_enabled: true,
+             key_hints: FooterKeyHints::default_bindings(),
+             active_agent_label: Some("Robie [explorer]".to_string()),
+@@ -2027,7 +2266,7 @@ mod tests {
+     }
+ 
+     #[test]
+-    fn footer_status_line_truncates_to_keep_mode_indicator() {
++    fn footer_status_line_wraps_and_keeps_full_mode_indicator_when_final_row_can_share() {
+         let props = FooterProps {
+             mode: FooterMode::ComposerEmpty,
+             esc_backtrack_hint: false,
+@@ -2037,10 +2276,12 @@ mod tests {
+             collaboration_modes_enabled: true,
+             is_wsl: false,
+             quit_shortcut_key: key_hint::ctrl(KeyCode::Char('c')),
+-            status_line_value: Some(Line::from(
+-                "Status line content that is definitely too long to fit alongside the mode label"
+-                    .to_string(),
+-            )),
++            status_line_value: StatusLine::from_fields(vec![
++                Line::from("Status line content"),
++                Line::from("that is definitely"),
++                Line::from("too long to fit"),
++                Line::from("alongside the mode label"),
++            ]),
+             status_line_enabled: true,
+             key_hints: FooterKeyHints::default_bindings(),
+             active_agent_label: None,
+@@ -2058,13 +2299,21 @@ mod tests {
+             "mode indicator should remain visible"
+         );
+         assert!(
+-            !collapsed.contains("shift+tab to cycle"),
+-            "compact mode indicator should be used when space is tight"
+-        );
+-        assert!(
+-            screen.contains('…'),
+-            "status line should be truncated with ellipsis to keep mode indicator"
++            collapsed.contains("shift+tab to cycle"),
++            "full mode indicator should remain when the final status row can share"
+         );
++        for field in [
++            "Status line content",
++            "that is definitely",
++            "too long to fit",
++            "alongside the mode label",
++        ] {
++            assert!(
++                screen.contains(field),
++                "status field {field:?} should remain visible, saw {screen:?}"
++            );
++        }
++        assert!(!screen.contains('…'), "status line should not be truncated");
+     }
+ 
+     #[test]
+diff --git a/codex-rs/tui/src/bottom_pane/mod.rs b/codex-rs/tui/src/bottom_pane/mod.rs
+index 4e9e0c948e..2e99d78584 100644
+--- a/codex-rs/tui/src/bottom_pane/mod.rs
++++ b/codex-rs/tui/src/bottom_pane/mod.rs
+@@ -64,6 +64,7 @@ mod approval_overlay;
+ mod mcp_server_elicitation;
+ mod multi_select_picker;
+ mod request_user_input;
++mod status_line;
+ mod status_line_setup;
+ mod status_line_style;
+ mod status_surface_preview;
+@@ -86,6 +87,7 @@ pub(crate) use approval_overlay::format_requested_permissions_rule;
+ pub(crate) use mcp_server_elicitation::McpServerElicitationFormRequest;
+ pub(crate) use mcp_server_elicitation::McpServerElicitationOverlay;
+ pub(crate) use request_user_input::RequestUserInputOverlay;
++pub(crate) use status_line::StatusLine;
+ pub(crate) use status_line_style::status_line_from_segments;
+ mod bottom_pane_view;
+ mod effort_ignition;
+@@ -1924,7 +1926,7 @@ impl BottomPane {
+         }
+     }
+ 
+-    pub(crate) fn set_status_line(&mut self, status_line: Option<Line<'static>>) {
++    pub(crate) fn set_status_line(&mut self, status_line: Option<StatusLine>) {
+         if self.composer.set_status_line(status_line) {
+             self.request_redraw();
+         }
+diff --git a/codex-rs/tui/src/bottom_pane/snapshots/codex_tui__bottom_pane__chat_composer__tests__full_cycle_indicator_shares_after_whole_field_reflow.snap b/codex-rs/tui/src/bottom_pane/snapshots/codex_tui__bottom_pane__chat_composer__tests__full_cycle_indicator_shares_after_whole_field_reflow.snap
+new file mode 100644
+index 0000000000..3de70fdeaa
+--- /dev/null
++++ b/codex-rs/tui/src/bottom_pane/snapshots/codex_tui__bottom_pane__chat_composer__tests__full_cycle_indicator_shares_after_whole_field_reflow.snap
+@@ -0,0 +1,9 @@
++---
++source: tui/src/bottom_pane/chat_composer.rs
++expression: terminal.backend()
++---
++"                                          "
++"› Ask Codex to do anything                "
++"                                          "
++"  aaaaaa                                  "
++"  bb · cc Plan mode (shift+tab to cycle)  "
+diff --git a/codex-rs/tui/src/bottom_pane/snapshots/codex_tui__bottom_pane__chat_composer__tests__multiline_status_footer_reserves_every_row.snap b/codex-rs/tui/src/bottom_pane/snapshots/codex_tui__bottom_pane__chat_composer__tests__multiline_status_footer_reserves_every_row.snap
+new file mode 100644
+index 0000000000..1f9fd87c55
+--- /dev/null
++++ b/codex-rs/tui/src/bottom_pane/snapshots/codex_tui__bottom_pane__chat_composer__tests__multiline_status_footer_reserves_every_row.snap
+@@ -0,0 +1,10 @@
++---
++source: tui/src/bottom_pane/chat_composer.rs
++expression: terminal.backend()
++---
++"            "
++"› Ask Codex "
++"            "
++"  long-statu"
++"  s-field   "
++" Plan mode  "
+diff --git a/codex-rs/tui/src/bottom_pane/snapshots/codex_tui__bottom_pane__footer__tests__footer_status_line_truncated_with_gap.snap b/codex-rs/tui/src/bottom_pane/snapshots/codex_tui__bottom_pane__footer__tests__footer_status_line_exactly_two_rows.snap
+similarity index 55%
+rename from codex-rs/tui/src/bottom_pane/snapshots/codex_tui__bottom_pane__footer__tests__footer_status_line_truncated_with_gap.snap
+rename to codex-rs/tui/src/bottom_pane/snapshots/codex_tui__bottom_pane__footer__tests__footer_status_line_exactly_two_rows.snap
+index cef1531fd6..1f1010308f 100644
+--- a/codex-rs/tui/src/bottom_pane/snapshots/codex_tui__bottom_pane__footer__tests__footer_status_line_truncated_with_gap.snap
++++ b/codex-rs/tui/src/bottom_pane/snapshots/codex_tui__bottom_pane__footer__tests__footer_status_line_exactly_two_rows.snap
+@@ -2,4 +2,5 @@
+ source: tui/src/bottom_pane/footer.rs
+ expression: terminal.backend()
+ ---
+-"  Status line content that … Plan mode  "
++"  model · feature-branch    "
++"  Context 70% used          "
+diff --git a/codex-rs/tui/src/bottom_pane/snapshots/codex_tui__bottom_pane__footer__tests__footer_status_line_wraps_with_gap.snap b/codex-rs/tui/src/bottom_pane/snapshots/codex_tui__bottom_pane__footer__tests__footer_status_line_wraps_with_gap.snap
+new file mode 100644
+index 0000000000..fd93565691
+--- /dev/null
++++ b/codex-rs/tui/src/bottom_pane/snapshots/codex_tui__bottom_pane__footer__tests__footer_status_line_wraps_with_gap.snap
+@@ -0,0 +1,6 @@
++---
++source: tui/src/bottom_pane/footer.rs
++expression: terminal.backend()
++---
++"  Status line content · that should wrap"
++"  before the mode indicator  Plan mode  "
+diff --git a/codex-rs/tui/src/bottom_pane/status_line.rs b/codex-rs/tui/src/bottom_pane/status_line.rs
+new file mode 100644
+index 0000000000..b4fe0c6f0c
+--- /dev/null
++++ b/codex-rs/tui/src/bottom_pane/status_line.rs
+@@ -0,0 +1,395 @@
++use ratatui::prelude::Stylize;
++use ratatui::text::Line;
++use ratatui::text::Span;
++use unicode_segmentation::UnicodeSegmentation;
++
++use crate::line_truncation::line_width;
++use crate::width::display_width;
++
++const FIELD_SEPARATOR: &str = " · ";
++
++#[derive(Clone, Debug, Eq, PartialEq)]
++pub(crate) struct StatusLine {
++    fields: Vec<Line<'static>>,
++    fixed_rows: Option<Vec<Line<'static>>>,
++}
++
++impl StatusLine {
++    pub(crate) fn from_fields(fields: Vec<Line<'static>>) -> Option<Self> {
++        (!fields.is_empty()).then_some(Self {
++            fields,
++            fixed_rows: None,
++        })
++    }
++
++    pub(crate) fn from_line(line: Line<'static>) -> Self {
++        Self {
++            fields: vec![line],
++            fixed_rows: None,
++        }
++    }
++
++    /// Creates a status line whose source rows remain distinct during layout.
++    pub(crate) fn from_fixed_rows(rows: Vec<Line<'static>>) -> Option<Self> {
++        let rows = rows.into_iter().filter(has_text).collect::<Vec<_>>();
++        (!rows.is_empty()).then_some(Self {
++            fields: Vec::new(),
++            fixed_rows: Some(rows),
++        })
++    }
++
++    pub(crate) fn push_field(&mut self, field: Line<'static>) {
++        if let Some(rows) = self.fixed_rows.as_mut() {
++            if let Some(last_row) = rows.last_mut() {
++                if has_text(last_row) {
++                    last_row.spans.push(FIELD_SEPARATOR.dim());
++                }
++                append_line_spans(&mut last_row.spans, &field);
++            } else {
++                rows.push(field);
++            }
++        } else {
++            self.fields.push(field);
++        }
++    }
++
++    #[cfg(test)]
++    pub(crate) fn text(&self) -> String {
++        self.fixed_rows
++            .as_ref()
++            .unwrap_or(&self.fields)
++            .iter()
++            .filter(|field| has_text(field))
++            .map(line_text)
++            .collect::<Vec<_>>()
++            .join(if self.fixed_rows.is_some() {
++                "\n"
++            } else {
++                FIELD_SEPARATOR
++            })
++    }
++
++    pub(crate) fn to_line(&self) -> Line<'static> {
++        join_fields(
++            self.fixed_rows
++                .as_ref()
++                .unwrap_or(&self.fields)
++                .iter()
++                .cloned(),
++        )
++    }
++
++    pub(crate) fn layout(&self, width: usize) -> Vec<Line<'static>> {
++        if width == 0 {
++            return Vec::new();
++        }
++
++        if let Some(rows) = self.fixed_rows.as_ref() {
++            return rows
++                .iter()
++                .flat_map(|row| {
++                    pack_into_capacities(
++                        std::slice::from_ref(row),
++                        &[width],
++                        RowCapacityMode::RepeatLast,
++                    )
++                    .unwrap_or_default()
++                })
++                .collect();
++        }
++
++        pack_into_capacities(&self.fields, &[width], RowCapacityMode::RepeatLast)
++            .unwrap_or_else(|| unreachable!("a repeated positive row width fits every field"))
++    }
++
++    pub(crate) fn layout_with_last_width(
++        &self,
++        width: usize,
++        last_width: usize,
++    ) -> Option<Vec<Line<'static>>> {
++        if width == 0 || last_width == 0 {
++            return None;
++        }
++
++        if let Some(rows) = self.fixed_rows.as_ref() {
++            let (last, leading) = rows.split_last()?;
++            let mut lines = leading
++                .iter()
++                .flat_map(|row| {
++                    pack_into_capacities(
++                        std::slice::from_ref(row),
++                        &[width],
++                        RowCapacityMode::RepeatLast,
++                    )
++                    .unwrap_or_default()
++                })
++                .collect::<Vec<_>>();
++            let trailing =
++                Self::from_line(last.clone()).layout_with_last_width(width, last_width)?;
++            lines.extend(trailing);
++            return Some(lines);
++        }
++
++        let full_layout = self.layout(width);
++        let final_line = full_layout.last()?;
++        if final_line.width() <= last_width {
++            return Some(full_layout);
++        }
++
++        let fields = self
++            .fields
++            .iter()
++            .filter(|field| has_text(field))
++            .cloned()
++            .collect::<Vec<_>>();
++        let separator_width = display_width(FIELD_SEPARATOR);
++        let mut suffix_fields = Vec::new();
++        let mut suffix_width = 0usize;
++        let mut prefix_count = fields.len();
++
++        while let Some(field) = prefix_count
++            .checked_sub(1)
++            .and_then(|index| fields.get(index))
++        {
++            let field_width = line_width(field);
++            let gap_width = usize::from(!suffix_fields.is_empty()).saturating_mul(separator_width);
++            let combined_width = field_width
++                .saturating_add(gap_width)
++                .saturating_add(suffix_width);
++            if combined_width <= last_width {
++                suffix_fields.push(field.clone());
++                suffix_width = combined_width;
++                prefix_count = prefix_count.saturating_sub(1);
++                continue;
++            }
++
++            if suffix_fields.is_empty() {
++                if field_width <= width {
++                    return None;
++                }
++                let mut graphemes = field
++                    .spans
++                    .iter()
++                    .flat_map(|span| {
++                        let style = field.style.patch(span.style);
++                        span.content
++                            .graphemes(/*is_extended*/ true)
++                            .map(move |grapheme| {
++                                (
++                                    Span::styled(grapheme.to_string(), style),
++                                    display_width(grapheme),
++                                )
++                            })
++                    })
++                    .collect::<Vec<_>>();
++                let mut suffix_start = graphemes.len();
++                let mut split_suffix_width = 0usize;
++                while let Some((_, grapheme_width)) = suffix_start
++                    .checked_sub(1)
++                    .and_then(|index| graphemes.get(index))
++                {
++                    if split_suffix_width.saturating_add(*grapheme_width) > last_width {
++                        break;
++                    }
++                    split_suffix_width = split_suffix_width.saturating_add(*grapheme_width);
++                    suffix_start = suffix_start.saturating_sub(1);
++                }
++                if suffix_start == graphemes.len() {
++                    return None;
++                }
++
++                let suffix_graphemes = graphemes.split_off(suffix_start);
++                let mut prefix_spans = Vec::new();
++                for (span, _) in graphemes {
++                    append_span(&mut prefix_spans, span);
++                }
++                let mut suffix_spans = Vec::new();
++                for (span, _) in suffix_graphemes {
++                    append_span(&mut suffix_spans, span);
++                }
++
++                let mut prefix_fields = fields[..prefix_count.saturating_sub(1)].to_vec();
++                if !prefix_spans.is_empty() {
++                    prefix_fields.push(Line::from(prefix_spans));
++                }
++                suffix_fields.push(Line::from(suffix_spans));
++
++                let mut lines =
++                    pack_into_capacities(&prefix_fields, &[width], RowCapacityMode::RepeatLast)?;
++                lines.extend(pack_into_capacities(
++                    &suffix_fields,
++                    &[last_width],
++                    RowCapacityMode::Fixed,
++                )?);
++                return Some(lines);
++            }
++            break;
++        }
++
++        suffix_fields.reverse();
++        let mut lines = pack_into_capacities(
++            &fields[..prefix_count],
++            &[width],
++            RowCapacityMode::RepeatLast,
++        )?;
++        lines.extend(pack_into_capacities(
++            &suffix_fields,
++            &[last_width],
++            RowCapacityMode::Fixed,
++        )?);
++        Some(lines)
++    }
++}
++
++#[derive(Clone, Copy, Debug, Eq, PartialEq)]
++enum RowCapacityMode {
++    Fixed,
++    RepeatLast,
++}
++
++#[cfg(test)]
++fn line_text(line: &Line<'_>) -> String {
++    line.spans
++        .iter()
++        .map(|span| span.content.as_ref())
++        .collect()
++}
++
++fn has_text(line: &Line<'_>) -> bool {
++    line.spans.iter().any(|span| !span.content.is_empty())
++}
++
++fn join_fields(fields: impl IntoIterator<Item = Line<'static>>) -> Line<'static> {
++    let mut spans = Vec::new();
++
++    for field in fields {
++        if !has_text(&field) {
++            continue;
++        }
++        if !spans.is_empty() {
++            spans.push(FIELD_SEPARATOR.dim());
++        }
++        append_line_spans(&mut spans, &field);
++    }
++
++    Line::from(spans)
++}
++
++fn pack_into_capacities(
++    fields: &[Line<'static>],
++    capacities: &[usize],
++    mode: RowCapacityMode,
++) -> Option<Vec<Line<'static>>> {
++    let mut rows = Vec::new();
++    let mut row_spans = Vec::new();
++    let mut row_width = 0;
++
++    for field in fields {
++        if !has_text(field) {
++            continue;
++        }
++
++        let field_width = line_width(field);
++        let capacity = row_capacity(capacities, rows.len(), mode)?;
++        if row_spans.is_empty() && field_width <= capacity {
++            append_line_spans(&mut row_spans, field);
++            row_width = field_width;
++            continue;
++        }
++
++        let separator_width = display_width(FIELD_SEPARATOR);
++        if !row_spans.is_empty()
++            && row_width
++                .saturating_add(separator_width)
++                .saturating_add(field_width)
++                <= capacity
++        {
++            append_span(&mut row_spans, FIELD_SEPARATOR.dim());
++            append_line_spans(&mut row_spans, field);
++            row_width = row_width
++                .saturating_add(separator_width)
++                .saturating_add(field_width);
++            continue;
++        }
++
++        if !row_spans.is_empty() {
++            rows.push(Line::from(std::mem::take(&mut row_spans)));
++            row_width = 0;
++        }
++
++        let capacity = row_capacity(capacities, rows.len(), mode)?;
++        if field_width <= capacity {
++            append_line_spans(&mut row_spans, field);
++            row_width = field_width;
++            continue;
++        }
++
++        for span in &field.spans {
++            let source_style = field.style.patch(span.style);
++            for grapheme in span.content.graphemes(/*is_extended*/ true) {
++                let grapheme_width = display_width(grapheme);
++                let capacity = row_capacity(capacities, rows.len(), mode)?;
++                if !row_spans.is_empty() && row_width.saturating_add(grapheme_width) > capacity {
++                    rows.push(Line::from(std::mem::take(&mut row_spans)));
++                    row_width = 0;
++                }
++
++                let capacity = row_capacity(capacities, rows.len(), mode)?;
++                if mode == RowCapacityMode::Fixed && grapheme_width > capacity {
++                    return None;
++                }
++
++                append_span(
++                    &mut row_spans,
++                    Span::styled(grapheme.to_string(), source_style),
++                );
++                row_width = row_width.saturating_add(grapheme_width);
++
++                if row_width >= capacity {
++                    rows.push(Line::from(std::mem::take(&mut row_spans)));
++                    row_width = 0;
++                }
++            }
++        }
++    }
++
++    if !row_spans.is_empty() {
++        rows.push(Line::from(row_spans));
++    }
++
++    Some(rows)
++}
++
++fn row_capacity(capacities: &[usize], row_index: usize, mode: RowCapacityMode) -> Option<usize> {
++    let capacity = match mode {
++        RowCapacityMode::Fixed => capacities.get(row_index).copied(),
++        RowCapacityMode::RepeatLast => capacities
++            .get(row_index)
++            .copied()
++            .or_else(|| capacities.last().copied()),
++    }?;
++    (capacity > 0).then_some(capacity)
++}
++
++fn append_line_spans(destination: &mut Vec<Span<'static>>, line: &Line<'static>) {
++    for span in &line.spans {
++        destination.push(Span::styled(
++            span.content.to_string(),
++            line.style.patch(span.style),
++        ));
++    }
++}
++
++fn append_span(destination: &mut Vec<Span<'static>>, span: Span<'static>) {
++    if let Some(previous) = destination.last_mut()
++        && previous.style == span.style
++    {
++        previous.content.to_mut().push_str(span.content.as_ref());
++    } else {
++        destination.push(span);
++    }
++}
++
++#[cfg(test)]
++#[path = "status_line_tests.rs"]
++mod tests;
+diff --git a/codex-rs/tui/src/bottom_pane/status_line_setup.rs b/codex-rs/tui/src/bottom_pane/status_line_setup.rs
+index a5f728ed82..2ed7f0efa5 100644
+--- a/codex-rs/tui/src/bottom_pane/status_line_setup.rs
++++ b/codex-rs/tui/src/bottom_pane/status_line_setup.rs
+@@ -335,13 +335,15 @@ impl StatusLineSetupView {
+                     .find(|item| item.id == STATUS_LINE_USE_THEME_COLORS_ITEM_ID)
+                     .map(|item| item.enabled)
+                     .unwrap_or(true);
+-                preview_data.status_line_for_items(
+-                    items
+-                        .iter()
+-                        .filter(|item| item.enabled)
+-                        .filter_map(|item| item.id.parse::<StatusLineItem>().ok()),
+-                    use_theme_colors,
+-                )
++                preview_data
++                    .status_line_for_items(
++                        items
++                            .iter()
++                            .filter(|item| item.enabled)
++                            .filter_map(|item| item.id.parse::<StatusLineItem>().ok()),
++                        use_theme_colors,
++                    )
++                    .map(|status| status.to_line())
+             })
+             .on_confirm(|ids, app_event| {
+                 let use_theme_colors = ids
+@@ -427,7 +429,6 @@ mod tests {
+     use pretty_assertions::assert_eq;
+     use ratatui::buffer::Buffer;
+     use ratatui::layout::Rect;
+-    use ratatui::text::Line;
+     use tokio::sync::mpsc::unbounded_channel;
+ 
+     use crate::app_event::AppEvent;
+@@ -577,14 +578,14 @@ mod tests {
+         ];
+ 
+         assert_eq!(
+-            line_text(
+-                preview_data.status_line_for_items(
++            preview_data
++                .status_line_for_items(
+                     items
+                         .iter()
+                         .filter_map(|item| item.id.parse::<StatusLineItem>().ok()),
+                     /*use_theme_colors*/ true,
+                 )
+-            ),
++                .map(|status| status.text()),
+             Some("gpt-5 · /repo".to_string())
+         );
+     }
+@@ -615,14 +616,14 @@ mod tests {
+         ];
+ 
+         assert_eq!(
+-            line_text(
+-                preview_data.status_line_for_items(
++            preview_data
++                .status_line_for_items(
+                     items
+                         .iter()
+                         .filter_map(|item| item.id.parse::<StatusLineItem>().ok()),
+                     /*use_theme_colors*/ true,
+                 )
+-            ),
++                .map(|status| status.text()),
+             Some("gpt-5 · feat/awesome-feature".to_string())
+         );
+     }
+@@ -659,14 +660,14 @@ mod tests {
+         ];
+ 
+         assert_eq!(
+-            line_text(
+-                preview_data.status_line_for_items(
++            preview_data
++                .status_line_for_items(
+                     items
+                         .iter()
+                         .filter_map(|item| item.id.parse::<StatusLineItem>().ok()),
+                     /*use_theme_colors*/ true,
+                 )
+-            ),
++                .map(|status| status.text()),
+             Some("gpt-5 · Roadmap cleanup".to_string())
+         );
+     }
+@@ -786,13 +787,4 @@ mod tests {
+             .collect::<Vec<_>>()
+             .join("\n")
+     }
+-
+-    fn line_text(line: Option<Line<'static>>) -> Option<String> {
+-        line.map(|line| {
+-            line.spans
+-                .iter()
+-                .map(|span| span.content.as_ref())
+-                .collect::<String>()
+-        })
+-    }
+ }
+diff --git a/codex-rs/tui/src/bottom_pane/status_line_style.rs b/codex-rs/tui/src/bottom_pane/status_line_style.rs
+index 4783f5523b..abf12bb735 100644
+--- a/codex-rs/tui/src/bottom_pane/status_line_style.rs
++++ b/codex-rs/tui/src/bottom_pane/status_line_style.rs
+@@ -1,15 +1,14 @@
+ //! Theme-derived styling for the configurable footer statusline.
+ 
+-use ratatui::prelude::Stylize;
+ use ratatui::style::Color;
+ use ratatui::style::Style;
+ use ratatui::text::Line;
+ use ratatui::text::Span;
+ 
++use super::StatusLine;
+ use super::status_line_setup::StatusLineItem;
+ use crate::render::highlight::foreground_style_for_scopes;
+ 
+-const STATUS_LINE_SEPARATOR: &str = " · ";
+ const STATUS_LINE_COLOR_SATURATION_PERCENT: u16 = 85;
+ const STATUS_LINE_COLOR_BRIGHTNESS_PERCENT: u16 = 100;
+ 
+@@ -85,7 +84,7 @@ impl StatusLineAccent {
+ pub(crate) fn status_line_from_segments<I>(
+     segments: I,
+     use_theme_colors: bool,
+-) -> Option<Line<'static>>
++) -> Option<StatusLine>
+ where
+     I: IntoIterator<Item = (StatusLineItem, String)>,
+ {
+@@ -98,33 +97,42 @@ fn status_line_from_segments_with_resolver<I, F>(
+     segments: I,
+     use_theme_colors: bool,
+     theme_style_for_accent: F,
+-) -> Option<Line<'static>>
++) -> Option<StatusLine>
+ where
+     I: IntoIterator<Item = (StatusLineItem, String)>,
+     F: Fn(StatusLineAccent) -> Option<Style>,
+ {
+-    let mut spans = Vec::new();
+-    for (item, text) in segments {
+-        if !spans.is_empty() {
+-            spans.push(STATUS_LINE_SEPARATOR.dim());
+-        }
+-        let style = if use_theme_colors {
+-            let accent = StatusLineAccent::for_item(item);
+-            soften_status_line_style(
+-                theme_style_for_accent(accent).unwrap_or_else(|| accent.fallback_style()),
+-            )
+-        } else {
+-            Style::default().dim()
+-        };
+-        let style = if item == StatusLineItem::PullRequestNumber {
+-            style.underlined()
+-        } else {
+-            style
+-        };
+-        spans.push(Span::styled(text, style));
+-    }
++    let fields = segments
++        .into_iter()
++        .map(|(item, text)| {
++            let style = status_line_style(item, use_theme_colors, &theme_style_for_accent);
++            Line::from(Span::styled(text, style))
++        })
++        .collect::<Vec<_>>();
++    StatusLine::from_fields(fields)
++}
+ 
+-    (!spans.is_empty()).then(|| Line::from(spans))
++fn status_line_style<F>(
++    item: StatusLineItem,
++    use_theme_colors: bool,
++    theme_style_for_accent: &F,
++) -> Style
++where
++    F: Fn(StatusLineAccent) -> Option<Style>,
++{
++    let style = if use_theme_colors {
++        let accent = StatusLineAccent::for_item(item);
++        soften_status_line_style(
++            theme_style_for_accent(accent).unwrap_or_else(|| accent.fallback_style()),
++        )
++    } else {
++        Style::default().dim()
++    };
++    if item == StatusLineItem::PullRequestNumber {
++        style.underlined()
++    } else {
++        style
++    }
+ }
+ 
+ fn soften_status_line_style(mut style: Style) -> Style {
+@@ -195,7 +203,7 @@ mod tests {
+ 
+     #[test]
+     fn status_line_segments_preserve_order_and_plain_text() {
+-        let line = status_line_from_segments_with_resolver(
++        let status = status_line_from_segments_with_resolver(
+             [
+                 (StatusLineItem::ModelName, "gpt-5".to_string()),
+                 (StatusLineItem::CurrentDir, "/repo".to_string()),
+@@ -206,18 +214,30 @@ mod tests {
+         )
+         .expect("status line");
+ 
+-        assert_eq!(line_text(&line), "gpt-5 · /repo · main");
+-        assert_eq!(line.spans[0].style.fg, Some(Color::Cyan));
+-        assert!(!line.spans[0].style.add_modifier.contains(Modifier::DIM));
+-        assert_eq!(line.spans[2].style.fg, Some(Color::Green));
+-        assert!(!line.spans[2].style.add_modifier.contains(Modifier::DIM));
+-        assert_eq!(line.spans[4].style.fg, Some(Color::Magenta));
+-        assert!(!line.spans[4].style.add_modifier.contains(Modifier::DIM));
++        assert_eq!(status.text(), "gpt-5 · /repo · main");
++        let lines = status.layout(/*width*/ 100);
++        assert_eq!(lines.len(), 1);
++        assert_eq!(lines[0].spans[0].style.fg, Some(Color::Cyan));
++        assert!(!lines[0].spans[0].style.add_modifier.contains(Modifier::DIM));
++        assert_eq!(lines[0].spans[2].style.fg, Some(Color::Green));
++        assert!(!lines[0].spans[2].style.add_modifier.contains(Modifier::DIM));
++        assert_eq!(lines[0].spans[4].style.fg, Some(Color::Magenta));
++        assert!(!lines[0].spans[4].style.add_modifier.contains(Modifier::DIM));
++
++        let literal_separator = status_line_from_segments_with_resolver(
++            [(StatusLineItem::ThreadTitle, "left · right".to_string())],
++            /*use_theme_colors*/ true,
++            |_| None,
++        )
++        .expect("status line");
++        assert_eq!(literal_separator.layout(/*width*/ 8).len(), 2);
++        assert_eq!(literal_separator.text(), "left · right");
++        assert_eq!(literal_separator.to_line().spans.len(), 1);
+     }
+ 
+     #[test]
+     fn status_line_segments_dim_separators_and_use_theme_styles_first() {
+-        let line = status_line_from_segments_with_resolver(
++        let status = status_line_from_segments_with_resolver(
+             [
+                 (StatusLineItem::ModelName, "gpt-5".to_string()),
+                 (StatusLineItem::ContextUsed, "Context 12% used".to_string()),
+@@ -229,6 +249,7 @@ mod tests {
+             },
+         )
+         .expect("status line");
++        let line = status.to_line();
+ 
+         assert_eq!(line.spans[0].style.fg, Some(Color::Red));
+         assert!(!line.spans[0].style.add_modifier.contains(Modifier::DIM));
+@@ -239,7 +260,7 @@ mod tests {
+ 
+     #[test]
+     fn thread_usage_items_share_an_accent_and_dim_separator() {
+-        let line = status_line_from_segments_with_resolver(
++        let status = status_line_from_segments_with_resolver(
+             [
+                 (StatusLineItem::ThreadCredits, "5.2 credits".to_string()),
+                 (StatusLineItem::EstimatedThreadCost, "~$0.21".to_string()),
+@@ -248,6 +269,7 @@ mod tests {
+             |_| None,
+         )
+         .expect("thread usage status line");
++        let line = status.to_line();
+ 
+         assert_eq!(line_text(&line), "5.2 credits · ~$0.21");
+         assert_eq!(line.spans[0].style, line.spans[2].style);
+@@ -257,12 +279,13 @@ mod tests {
+     #[test]
+     #[allow(clippy::disallowed_methods)]
+     fn status_line_segments_soften_rgb_theme_styles_without_dimming_text() {
+-        let line = status_line_from_segments_with_resolver(
++        let status = status_line_from_segments_with_resolver(
+             [(StatusLineItem::ModelName, "gpt-5".to_string())],
+             /*use_theme_colors*/ true,
+             |_| Some(Style::default().fg(Color::Rgb(255, 0, 0))),
+         )
+         .expect("status line");
++        let line = status.to_line();
+ 
+         assert_eq!(line.spans[0].style.fg, Some(Color::Rgb(228, 11, 11)));
+         assert!(!line.spans[0].style.add_modifier.contains(Modifier::DIM));
+@@ -270,7 +293,7 @@ mod tests {
+ 
+     #[test]
+     fn status_line_segments_can_disable_theme_colors() {
+-        let line = status_line_from_segments_with_resolver(
++        let status = status_line_from_segments_with_resolver(
+             [
+                 (StatusLineItem::ModelName, "gpt-5".to_string()),
+                 (StatusLineItem::ContextUsed, "Context 12% used".to_string()),
+@@ -279,6 +302,7 @@ mod tests {
+             |_| Some(Style::default().red()),
+         )
+         .expect("status line");
++        let line = status.to_line();
+ 
+         assert_eq!(line_text(&line), "gpt-5 · Context 12% used");
+         assert_eq!(line.spans[0].style.fg, None);
+@@ -290,12 +314,13 @@ mod tests {
+ 
+     #[test]
+     fn pull_request_number_uses_link_style() {
+-        let line = status_line_from_segments_with_resolver(
++        let status = status_line_from_segments_with_resolver(
+             [(StatusLineItem::PullRequestNumber, "PR #20252".to_string())],
+             /*use_theme_colors*/ false,
+             |_| None,
+         )
+         .expect("status line");
++        let line = status.to_line();
+ 
+         assert_eq!(line.spans[0].style.fg, None);
+         assert!(line.spans[0].style.add_modifier.contains(Modifier::DIM));
+diff --git a/codex-rs/tui/src/bottom_pane/status_line_tests.rs b/codex-rs/tui/src/bottom_pane/status_line_tests.rs
+new file mode 100644
+index 0000000000..a7ef1e3ae9
+--- /dev/null
++++ b/codex-rs/tui/src/bottom_pane/status_line_tests.rs
+@@ -0,0 +1,164 @@
++use super::StatusLine;
++use pretty_assertions::assert_eq;
++use ratatui::prelude::Stylize;
++use ratatui::text::Line;
++
++#[test]
++fn wraps_at_field_boundaries_across_all_required_rows() {
++    let status = StatusLine::from_fields(vec![
++        Line::from("model"),
++        Line::from("branch"),
++        Line::from("context"),
++        Line::from("tokens"),
++    ])
++    .expect("status line");
++
++    assert_eq!(
++        status.layout(/*width*/ 10),
++        vec![
++            Line::from("model"),
++            Line::from("branch"),
++            Line::from("context"),
++            Line::from("tokens"),
++        ]
++    );
++}
++
++#[test]
++fn keeps_fields_together_when_the_combination_fits() {
++    let status =
++        StatusLine::from_fields(vec![Line::from("one"), Line::from("two")]).expect("status line");
++
++    assert_eq!(
++        status.layout(/*width*/ 9),
++        vec![Line::from(vec!["one".into(), " · ".dim(), "two".into()])]
++    );
++}
++
++#[test]
++fn oversized_fields_wrap_on_graphemes_and_preserve_styles() {
++    let field = Line::from(vec!["中文".cyan(), "👩‍💻e\u{301}".magenta().underlined()]);
++    let status = StatusLine::from_fields(vec![field]).expect("status line");
++    let lines = status.layout(/*width*/ 4);
++
++    assert_eq!(
++        lines,
++        vec![
++            Line::from("中文".cyan()),
++            Line::from("👩‍💻e\u{301}".magenta().underlined()),
++        ]
++    );
++}
++
++#[test]
++fn exhausted_width_is_safe() {
++    let status = StatusLine::from_fields(vec![Line::from("field")]).expect("status line");
++
++    assert_eq!(status.layout(/*width*/ 0), Vec::<Line<'static>>::new());
++    assert_eq!(
++        status.layout_with_last_width(/*width*/ 0, /*last_width*/ 0),
++        None
++    );
++}
++
++#[test]
++fn flattened_conversion_preserves_field_spans_and_styles() {
++    let mut status = StatusLine::from_line(Line::from(vec!["model".cyan(), " name".cyan()]).bold());
++    status.push_field(Line::from("branch").magenta());
++
++    assert_eq!(status.text(), "model name · branch");
++    assert_eq!(
++        status.to_line(),
++        Line::from(vec![
++            "model".cyan().bold(),
++            " name".cyan().bold(),
++            " · ".dim(),
++            "branch".magenta(),
++        ])
++    );
++}
++
++#[test]
++fn constrained_last_row_rejects_an_indivisible_wide_grapheme() {
++    let status = StatusLine::from_fields(vec![Line::from("abc中")]).expect("status line");
++
++    assert_eq!(
++        status.layout_with_last_width(/*width*/ 4, /*last_width*/ 1),
++        None
++    );
++}
++
++#[test]
++fn constrained_last_row_does_not_split_a_field_that_fits_the_normal_width() {
++    let status = StatusLine::from_fields(vec![Line::from("abcd")]).expect("status line");
++
++    assert_eq!(
++        status.layout_with_last_width(/*width*/ 4, /*last_width*/ 2),
++        None
++    );
++}
++
++#[test]
++fn constrained_last_row_reflows_whole_fields_across_earlier_rows() {
++    let status = StatusLine::from_fields(vec![
++        Line::from("aaaaaa"),
++        Line::from("bb"),
++        Line::from("cc"),
++    ])
++    .expect("status line");
++
++    assert_eq!(
++        status.layout_with_last_width(/*width*/ 10, /*last_width*/ 2),
++        Some(vec![
++            Line::from("aaaaaa"),
++            Line::from("bb"),
++            Line::from("cc"),
++        ])
++    );
++}
++
++#[test]
++fn constrained_last_row_splits_graphemes_and_preserves_styles() {
++    let field = Line::from(vec![
++        "ab".cyan(),
++        "中文".magenta().underlined(),
++        "z".green(),
++    ])
++    .bold();
++    let status = StatusLine::from_fields(vec![field]).expect("status line");
++
++    assert_eq!(
++        status.layout_with_last_width(/*width*/ 5, /*last_width*/ 2),
++        Some(vec![
++            Line::from(vec!["ab".cyan().bold(), "中".magenta().underlined().bold()]),
++            Line::from("文".magenta().underlined().bold()),
++            Line::from("z".green().bold()),
++        ])
++    );
++}
++
++#[test]
++fn omits_separators_around_empty_fields() {
++    let status = StatusLine::from_fields(vec![
++        Line::from("model"),
++        Line::default(),
++        Line::from("branch"),
++        Line::default(),
++    ])
++    .expect("status line");
++
++    assert_eq!(status.text(), "model · branch");
++    assert_eq!(
++        status.to_line(),
++        Line::from(vec!["model".into(), " · ".dim(), "branch".into()])
++    );
++}
++
++#[test]
++fn maximum_capacity_is_safe() {
++    let status =
++        StatusLine::from_fields(vec![Line::from("one"), Line::from("two")]).expect("status line");
++    let expected = vec![Line::from(vec!["one".into(), " · ".dim(), "two".into()])];
++
++    assert_eq!(status.layout(usize::MAX), expected);
++}
+diff --git a/codex-rs/tui/src/bottom_pane/status_surface_preview.rs b/codex-rs/tui/src/bottom_pane/status_surface_preview.rs
+index c0ce0f6c47..70c59ae79c 100644
+--- a/codex-rs/tui/src/bottom_pane/status_surface_preview.rs
++++ b/codex-rs/tui/src/bottom_pane/status_surface_preview.rs
+@@ -1,7 +1,6 @@
+ use std::collections::BTreeMap;
+ 
+-use ratatui::text::Line;
+-
++use super::StatusLine;
+ use super::status_line_from_segments;
+ use super::status_line_setup::StatusLineItem;
+ 
+@@ -231,7 +230,7 @@ impl StatusSurfacePreviewData {
+         &self,
+         items: I,
+         use_theme_colors: bool,
+-    ) -> Option<Line<'static>>
++    ) -> Option<StatusLine>
+     where
+         I: IntoIterator<Item = StatusLineItem>,
+     {
+diff --git a/codex-rs/tui/src/chatwidget.rs b/codex-rs/tui/src/chatwidget.rs
+index 01a1dd9b14..b54ea42a8c 100644
+--- a/codex-rs/tui/src/chatwidget.rs
++++ b/codex-rs/tui/src/chatwidget.rs
+@@ -427,6 +427,7 @@ use self::status_state::StatusIndicatorState;
+ use self::status_state::StatusState;
+ use self::status_state::TerminalTitleStatusKind;
+ mod status_controls;
++pub(crate) mod status_line_command;
+ mod status_surfaces;
+ mod streaming;
+ use self::status_surfaces::CachedProjectRootName;
+@@ -778,6 +779,8 @@ pub(crate) struct ChatWidget {
+     status_line_workspace_headline_last_requested_at: Option<Instant>,
+     // Set after the backend reports the workspace-message feature gate is disabled.
+     status_line_workspace_messages_disabled: bool,
++    // Cached command-backed status-line output and refresh state.
++    status_line_command: status_line_command::StatusLineCommandState,
+     // Cached backend-estimated cost and bounded refresh state for the current thread.
+     thread_usage: thread_usage::ThreadUsageState,
+     // Current thread-goal status shown in the status line when plan mode is inactive.
+@@ -1218,6 +1221,7 @@ impl ChatWidget {
+             self.refresh_terminal_title();
+         }
+         self.refresh_status_line_if_workspace_headline_due();
++        self.refresh_status_line_command_if_due();
+         self.refresh_thread_usage_if_settlement_due();
+     }
+ 
+diff --git a/codex-rs/tui/src/chatwidget/constructor.rs b/codex-rs/tui/src/chatwidget/constructor.rs
+index a1079ac7c4..82739f8bcf 100644
+--- a/codex-rs/tui/src/chatwidget/constructor.rs
++++ b/codex-rs/tui/src/chatwidget/constructor.rs
+@@ -253,6 +253,7 @@ impl ChatWidget {
+             next_status_line_workspace_headline_request_id: 0,
+             status_line_workspace_headline_last_requested_at: None,
+             status_line_workspace_messages_disabled: false,
++            status_line_command: status_line_command::StatusLineCommandState::default(),
+             thread_usage: thread_usage::ThreadUsageState::default(),
+             current_goal_status_indicator: None,
+             current_goal_status: None,
+diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__side_context_label_shows_parent_status.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__side_context_label_shows_parent_status.snap
+index b873d754c3..ab9282dcf7 100644
+--- a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__side_context_label_shows_parent_status.snap
++++ b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__side_context_label_shows_parent_status.snap
+@@ -6,4 +6,5 @@ expression: terminal.backend()
+ "                                                                                "
+ "› Ask a follow-up question                                                      "
+ "                                                                                "
++"  gpt-5.6-sol default · /tmp/project                                            "
+ "  Side from main thread · main needs input · ctrl + / to switch · ctrl + c to cl"
+diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__status_line_goal_indicator_preserves_multiline_footer_fields.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__status_line_goal_indicator_preserves_multiline_footer_fields.snap
+new file mode 100644
+index 0000000000..003e9b6ffd
+--- /dev/null
++++ b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__status_line_goal_indicator_preserves_multiline_footer_fields.snap
+@@ -0,0 +1,13 @@
++---
++source: tui/src/chatwidget/tests/status_and_layout.rs
++expression: rendered
++---
++"                            "
++"                            "
++"› Ask Codex to do anything  "
++"                            "
++"  gpt-5.4 high              "
++"  feature/multiline-footer  "
++"  Context 70% used          "
++"  123K used                 "
++"  Goal paused (/goal resume)"
+diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__status_line_mixed_rows_only_separate_shared_fields.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__status_line_mixed_rows_only_separate_shared_fields.snap
+new file mode 100644
+index 0000000000..47c3df3b11
+--- /dev/null
++++ b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__status_line_mixed_rows_only_separate_shared_fields.snap
+@@ -0,0 +1,11 @@
++---
++source: tui/src/chatwidget/tests/status_and_layout.rs
++expression: normalized_backend_snapshot(terminal.backend())
++---
++"                  "
++"                  "
++"› Ask Codex to do "
++"                  "
++"  alpha · beta    "
++"  long-status     "
++"  end             "
+diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__status_line_narrow_terminal_uses_all_required_footer_rows.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__status_line_narrow_terminal_uses_all_required_footer_rows.snap
+new file mode 100644
+index 0000000000..22e12610e4
+--- /dev/null
++++ b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__status_line_narrow_terminal_uses_all_required_footer_rows.snap
+@@ -0,0 +1,12 @@
++---
++source: tui/src/chatwidget/tests/status_and_layout.rs
++expression: rendered
++---
++"                            "
++"                            "
++"› Ask Codex to do anything  "
++"                            "
++"  gpt-5.4 high              "
++"  feature/multiline-footer  "
++"  Context 70% used          "
++"  123K used                 "
+diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__status_line_right_indicators_preserve_multiline_footer_fields.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__status_line_right_indicators_preserve_multiline_footer_fields.snap
+new file mode 100644
+index 0000000000..88074ea93c
+--- /dev/null
++++ b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__status_line_right_indicators_preserve_multiline_footer_fields.snap
+@@ -0,0 +1,13 @@
++---
++source: tui/src/chatwidget/tests/status_and_layout.rs
++expression: rendered
++---
++"                            "
++"                            "
++"› Ask Codex to do anything  "
++"                            "
++"  gpt-5.4 high              "
++"  feature/multiline-footer  "
++"  Context 70% used          "
++"  123K used                 "
++"   Plan mode · IDE context  "
+diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__status_line_unicode_graphemes_and_styles_survive_widget_reflow.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__status_line_unicode_graphemes_and_styles_survive_widget_reflow.snap
+new file mode 100644
+index 0000000000..40826d9511
+--- /dev/null
++++ b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__status_line_unicode_graphemes_and_styles_survive_widget_reflow.snap
+@@ -0,0 +1,10 @@
++---
++source: tui/src/chatwidget/tests/status_and_layout.rs
++expression: rendered
++---
++"            "
++"            "
++"› Ask Codex "
++"            "
++"  模型👩‍💻é状 " Hidden by multi-width symbols: [(3, " "), (5, " "), (7, " "), (10, " ")]
++"  态 · done " Hidden by multi-width symbols: [(3, " ")]
+diff --git a/codex-rs/tui/src/chatwidget/status_controls.rs b/codex-rs/tui/src/chatwidget/status_controls.rs
+index 8ebdf0fab8..c946a520b9 100644
+--- a/codex-rs/tui/src/chatwidget/status_controls.rs
++++ b/codex-rs/tui/src/chatwidget/status_controls.rs
+@@ -5,6 +5,7 @@
+ //! history-facing `/status` surface.
+ 
+ use super::*;
++use crate::bottom_pane::StatusLine;
+ 
+ impl ChatWidget {
+     /// Update the status indicator header and details.
+@@ -68,7 +69,7 @@ impl ChatWidget {
+     }
+ 
+     /// Sets the currently rendered footer status-line value.
+-    pub(crate) fn set_status_line(&mut self, status_line: Option<Line<'static>>) {
++    pub(crate) fn set_status_line(&mut self, status_line: Option<StatusLine>) {
+         self.bottom_pane.set_status_line(status_line);
+     }
+ 
+diff --git a/codex-rs/tui/src/chatwidget/status_line_command.rs b/codex-rs/tui/src/chatwidget/status_line_command.rs
+new file mode 100644
+index 0000000000..68c5b3ec10
+--- /dev/null
++++ b/codex-rs/tui/src/chatwidget/status_line_command.rs
+@@ -0,0 +1,363 @@
++//! Command-backed custom status-line execution and payload generation.
++
++use super::*;
++use codex_config::types::TuiStatusLineCommand;
++use serde::Serialize;
++use std::process::Stdio;
++use tokio::io::AsyncReadExt;
++use tokio::io::AsyncWriteExt;
++
++const MAX_CAPTURE_BYTES: usize = 32 * 1024;
++const MAX_RENDERED_LINES: usize = 8;
++const MIN_REFRESH_INTERVAL: Duration = Duration::from_millis(250);
++const MIN_TIMEOUT: Duration = Duration::from_millis(25);
++
++#[derive(Debug, Default)]
++pub(super) struct StatusLineCommandState {
++    pub(super) output: Option<Vec<String>>,
++    pub(super) pending_request_id: Option<u64>,
++    pub(super) next_request_id: u64,
++    pub(super) last_requested_at: Option<Instant>,
++    pub(super) last_payload: Option<String>,
++}
++
++#[derive(Serialize)]
++struct StatusLineCommandPayload<'a> {
++    schema_version: u8,
++    session_id: Option<String>,
++    session_name: Option<&'a str>,
++    cwd: String,
++    model: ModelPayload<'a>,
++    version: &'static str,
++    context_window: ContextWindowPayload,
++    rate_limits: Vec<RateLimitPayload<'a>>,
++    effort: EffortPayload,
++    runtime: RuntimePayload,
++    cost: CostPayload,
++    columns: u16,
++}
++
++#[derive(Serialize)]
++struct ModelPayload<'a> {
++    id: &'a str,
++    display_name: &'a str,
++}
++
++#[derive(Serialize)]
++struct ContextWindowPayload {
++    used_percentage: Option<i64>,
++    remaining_percentage: Option<i64>,
++    context_window_size: Option<i64>,
++    total_input_tokens: i64,
++    total_output_tokens: i64,
++    cached_input_tokens: i64,
++    cache_write_input_tokens: i64,
++}
++
++#[derive(Serialize)]
++struct RateLimitPayload<'a> {
++    id: &'a str,
++    primary: Option<RateLimitWindowPayload<'a>>,
++    secondary: Option<RateLimitWindowPayload<'a>>,
++}
++
++#[derive(Serialize)]
++struct RateLimitWindowPayload<'a> {
++    used_percentage: f64,
++    resets_at: Option<&'a str>,
++    window_minutes: Option<i64>,
++}
++
++#[derive(Serialize)]
++struct EffortPayload {
++    level: String,
++}
++
++#[derive(Serialize)]
++struct RuntimePayload {
++    state: String,
++    task_progress: Option<String>,
++}
++
++#[derive(Serialize)]
++struct CostPayload {
++    estimated_thread_cost_usd_micros: Option<i64>,
++    estimated_thread_credits_micros: Option<i64>,
++}
++
++impl ChatWidget {
++    pub(super) fn configured_status_line_command(&self) -> Option<TuiStatusLineCommand> {
++        self.config
++            .tui_status_line_command
++            .as_ref()
++            .filter(|config| !config.command.is_empty())
++            .cloned()
++    }
++
++    fn status_line_command_payload(&mut self) -> String {
++        let usage = self.status_line_total_usage();
++        let context_remaining = self.status_line_context_remaining_percent();
++        let cwd = self
++            .current_cwd
++            .as_deref()
++            .unwrap_or(self.config.cwd.as_path())
++            .display()
++            .to_string();
++        let rate_limits = self
++            .rate_limit_snapshots_by_limit_id
++            .iter()
++            .map(|(id, snapshot)| RateLimitPayload {
++                id,
++                primary: snapshot
++                    .primary
++                    .as_ref()
++                    .map(|window| RateLimitWindowPayload {
++                        used_percentage: window.used_percent,
++                        resets_at: window.resets_at.as_deref(),
++                        window_minutes: window.window_minutes,
++                    }),
++                secondary: snapshot
++                    .secondary
++                    .as_ref()
++                    .map(|window| RateLimitWindowPayload {
++                        used_percentage: window.used_percent,
++                        resets_at: window.resets_at.as_deref(),
++                        window_minutes: window.window_minutes,
++                    }),
++            })
++            .collect();
++        let estimated_usage = self.estimated_thread_usage();
++        let payload = StatusLineCommandPayload {
++            schema_version: 1,
++            session_id: self.thread_id.map(|id| id.to_string()),
++            session_name: self.thread_name.as_deref(),
++            cwd,
++            model: ModelPayload {
++                id: self.current_model(),
++                display_name: self.model_display_name(),
++            },
++            version: CODEX_CLI_VERSION,
++            context_window: ContextWindowPayload {
++                used_percentage: context_remaining.map(|remaining| 100 - remaining),
++                remaining_percentage: context_remaining,
++                context_window_size: self.status_line_context_window_size(),
++                total_input_tokens: usage.input_tokens,
++                total_output_tokens: usage.output_tokens,
++                cached_input_tokens: usage.cached_input_tokens,
++                cache_write_input_tokens: 0,
++            },
++            rate_limits,
++            effort: EffortPayload {
++                level: Self::status_line_reasoning_effort_label(
++                    self.effective_reasoning_effort().as_ref(),
++                ),
++            },
++            runtime: RuntimePayload {
++                state: self.run_state_status_text(),
++                task_progress: self.terminal_title_task_progress(),
++            },
++            cost: CostPayload {
++                estimated_thread_cost_usd_micros: estimated_usage
++                    .and_then(|usage| usage.estimated_usage_usd_micros),
++                estimated_thread_credits_micros: estimated_usage
++                    .map(|usage| usage.estimated_usage_credits_micros),
++            },
++            columns: self.last_rendered_width.get().unwrap_or(80),
++        };
++        serde_json::to_string(&payload).unwrap_or_else(|_| "{}".to_string())
++    }
++
++    fn request_status_line_command_if_due(&mut self, now: Instant) {
++        if self.status_line_command.pending_request_id.is_some() {
++            return;
++        }
++        let Some(config) = self.configured_status_line_command() else {
++            self.status_line_command = StatusLineCommandState::default();
++            return;
++        };
++        let payload = self.status_line_command_payload();
++        let payload_changed = self.status_line_command.last_payload.as_deref() != Some(&payload);
++        let refresh_interval =
++            Duration::from_millis(config.refresh_interval_ms).max(MIN_REFRESH_INTERVAL);
++        let interval_elapsed = self
++            .status_line_command
++            .last_requested_at
++            .is_none_or(|last| now.saturating_duration_since(last) >= refresh_interval);
++        if !payload_changed && !interval_elapsed {
++            return;
++        }
++
++        let request_id = self.status_line_command.next_request_id;
++        self.status_line_command.next_request_id = request_id.wrapping_add(/*rhs*/ 1);
++        self.status_line_command.pending_request_id = Some(request_id);
++        self.status_line_command.last_requested_at = Some(now);
++        self.status_line_command.last_payload = Some(payload.clone());
++        let cwd = self
++            .current_cwd
++            .clone()
++            .unwrap_or_else(|| self.config.cwd.to_path_buf());
++        self.app_event_tx.send(AppEvent::RefreshStatusLineCommand {
++            request_id,
++            config,
++            payload,
++            cwd,
++        });
++    }
++
++    pub(crate) fn refresh_status_line_command_if_due(&mut self) {
++        self.request_status_line_command_if_due(Instant::now());
++    }
++
++    pub(crate) fn set_status_line_command_output(
++        &mut self,
++        request_id: u64,
++        result: Result<Option<Vec<String>>, String>,
++    ) -> bool {
++        if self.status_line_command.pending_request_id != Some(request_id) {
++            return false;
++        }
++        self.status_line_command.pending_request_id = None;
++        match result {
++            Ok(output) => self.status_line_command.output = output,
++            Err(error) => {
++                tracing::debug!(%error, "status-line command failed; keeping last output")
++            }
++        }
++        self.refresh_status_surfaces();
++        true
++    }
++}
++
++pub(crate) async fn run_status_line_command(
++    config: &TuiStatusLineCommand,
++    payload: &str,
++    cwd: &Path,
++) -> Result<Option<Vec<String>>, String> {
++    let Some((program, args)) = config.command.split_first() else {
++        return Ok(None);
++    };
++    let mut command = tokio::process::Command::new(program);
++    command
++        .args(args)
++        .current_dir(cwd)
++        .stdin(Stdio::piped())
++        .stdout(Stdio::piped())
++        .stderr(Stdio::null())
++        .kill_on_drop(true);
++    let mut child = command
++        .spawn()
++        .map_err(|error| format!("failed to start status-line command: {error}"))?;
++    let mut stdin = child.stdin.take();
++    let mut stdout = child
++        .stdout
++        .take()
++        .ok_or_else(|| "status-line command did not provide stdout".to_string())?;
++    let payload = payload.as_bytes().to_vec();
++    let run = async move {
++        let writer = async move {
++            if let Some(mut stdin) = stdin.take() {
++                stdin.write_all(&payload).await?;
++                stdin.shutdown().await?;
++            }
++            std::io::Result::Ok(())
++        };
++        let reader = async move {
++            let mut retained = Vec::new();
++            let mut chunk = [0u8; 4096];
++            loop {
++                let read = stdout.read(&mut chunk).await?;
++                if read == 0 {
++                    break;
++                }
++                let remaining = MAX_CAPTURE_BYTES.saturating_sub(retained.len());
++                retained.extend_from_slice(&chunk[..read.min(remaining)]);
++            }
++            std::io::Result::Ok(retained)
++        };
++        let (write_result, read_result, wait_result) = tokio::join!(writer, reader, child.wait());
++        write_result.map_err(|error| error.to_string())?;
++        let output = read_result.map_err(|error| error.to_string())?;
++        let status = wait_result.map_err(|error| error.to_string())?;
++        if !status.success() {
++            return Err(format!("status-line command exited with {status}"));
++        }
++        Ok(output)
++    };
++    let timeout = Duration::from_millis(config.timeout_ms).max(MIN_TIMEOUT);
++    let output = tokio::time::timeout(timeout, run)
++        .await
++        .map_err(|_| "status-line command timed out".to_string())??;
++    let output = String::from_utf8_lossy(&output);
++    let max_lines = config.max_lines.clamp(1, MAX_RENDERED_LINES);
++    let lines = output
++        .lines()
++        .map(sanitize_status_line)
++        .filter(|line| !line.trim().is_empty())
++        .take(max_lines)
++        .collect::<Vec<_>>();
++    Ok((!lines.is_empty()).then_some(lines))
++}
++
++fn sanitize_status_line(input: &str) -> String {
++    let mut output = String::new();
++    let mut chars = input.chars().peekable();
++    while let Some(ch) = chars.next() {
++        if ch == '\u{1b}' {
++            if chars.next_if_eq(&']').is_some() {
++                while let Some(next) = chars.next() {
++                    if next == '\u{7}' || (next == '\u{1b}' && chars.next_if_eq(&'\\').is_some()) {
++                        break;
++                    }
++                }
++                continue;
++            }
++            if chars.next_if_eq(&'[').is_some() {
++                let mut params = String::new();
++                while let Some(next) = chars.peek().copied() {
++                    chars.next();
++                    if next == 'm' {
++                        output.push('\u{1b}');
++                        output.push('[');
++                        output.push_str(&params);
++                        output.push('m');
++                        break;
++                    }
++                    if next.is_ascii_digit() || next == ';' {
++                        params.push(next);
++                    } else {
++                        while let Some(rest) = chars.peek().copied() {
++                            chars.next();
++                            if rest.is_ascii_alphabetic() {
++                                break;
++                            }
++                        }
++                        break;
++                    }
++                }
++            }
++            continue;
++        }
++        if ch.is_control()
++            || matches!(
++                ch,
++                '\u{202a}'
++                    | '\u{202b}'
++                    | '\u{202c}'
++                    | '\u{202d}'
++                    | '\u{202e}'
++                    | '\u{2066}'
++                    | '\u{2067}'
++                    | '\u{2068}'
++                    | '\u{2069}'
++            )
++        {
++            continue;
++        }
++        output.push(ch);
++    }
++    output
++}
++
++#[cfg(test)]
++#[path = "status_line_command_tests.rs"]
++mod tests;
+diff --git a/codex-rs/tui/src/chatwidget/status_line_command_tests.rs b/codex-rs/tui/src/chatwidget/status_line_command_tests.rs
+new file mode 100644
+index 0000000000..e9ce1c810e
+--- /dev/null
++++ b/codex-rs/tui/src/chatwidget/status_line_command_tests.rs
+@@ -0,0 +1,55 @@
++use super::*;
++use pretty_assertions::assert_eq;
++
++fn command(argv: &[&str]) -> TuiStatusLineCommand {
++    TuiStatusLineCommand {
++        command: argv.iter().map(|arg| (*arg).to_string()).collect(),
++        refresh_interval_ms: 1_000,
++        timeout_ms: 250,
++        max_lines: 4,
++    }
++}
++
++#[cfg(unix)]
++#[tokio::test]
++async fn command_receives_json_and_preserves_multiple_lines() {
++    let result = run_status_line_command(
++        &command(&[
++            "sh",
++            "-c",
++            "read payload; printf 'one\\ntwo\\n%s\\n' \"$payload\"",
++        ]),
++        r#"{"schema_version":1}"#,
++        Path::new("/tmp"),
++    )
++    .await;
++
++    assert_eq!(
++        result,
++        Ok(Some(vec![
++            "one".to_string(),
++            "two".to_string(),
++            r#"{"schema_version":1}"#.to_string(),
++        ]))
++    );
++}
++
++#[cfg(unix)]
++#[tokio::test]
++async fn command_timeout_keeps_the_tui_bounded() {
++    let mut config = command(&["sh", "-c", "sleep 2"]);
++    config.timeout_ms = 25;
++
++    assert_eq!(
++        run_status_line_command(&config, "{}", Path::new("/tmp")).await,
++        Err("status-line command timed out".to_string())
++    );
++}
++
++#[test]
++fn sanitizer_keeps_sgr_and_removes_terminal_controls() {
++    assert_eq!(
++        sanitize_status_line("\u{1b}[31mred\u{1b}[0m\u{1b}]0;owned\u{7}safe\u{202e}"),
++        "\u{1b}[31mred\u{1b}[0msafe"
++    );
++}
+diff --git a/codex-rs/tui/src/chatwidget/status_surfaces.rs b/codex-rs/tui/src/chatwidget/status_surfaces.rs
+index e79c0d3ca6..15181693b6 100644
+--- a/codex-rs/tui/src/chatwidget/status_surfaces.rs
++++ b/codex-rs/tui/src/chatwidget/status_surfaces.rs
+@@ -4,6 +4,7 @@
+ //! behavior easier to review without paging through the rest of `chatwidget.rs`.
+ 
+ use super::*;
++use crate::bottom_pane::StatusLine;
+ use crate::bottom_pane::status_line_from_segments;
+ use crate::branch_summary;
+ use crate::chatwidget::limit_label_for_window;
+@@ -12,6 +13,7 @@ use crate::legacy_core::config::Config;
+ use crate::status::format_credit_micros;
+ use crate::status::format_estimated_usd_micros;
+ use crate::status::format_tokens_compact;
++use codex_ansi_escape::ansi_escape_line;
+ use codex_app_server_protocol::AskForApproval;
+ use codex_config::ConfigLayerSource;
+ use codex_config::os_host_name;
+@@ -198,7 +200,10 @@ impl ChatWidget {
+     }
+ 
+     fn refresh_status_line_from_selections(&mut self, selections: &StatusSurfaceSelections) {
+-        let enabled = !selections.status_line_items.is_empty();
++        let command_status_line = self.status_line_command.output.as_ref().and_then(|lines| {
++            StatusLine::from_fixed_rows(lines.iter().map(|line| ansi_escape_line(line)).collect())
++        });
++        let enabled = command_status_line.is_some() || !selections.status_line_items.is_empty();
+         self.bottom_pane.set_status_line_enabled(enabled);
+         if !enabled {
+             self.set_status_line(/*status_line*/ None);
+@@ -206,6 +211,12 @@ impl ChatWidget {
+             return;
+         }
+ 
++        if let Some(command_status_line) = command_status_line {
++            self.set_status_line(Some(command_status_line));
++            self.set_status_line_hyperlink(/*url*/ None);
++            return;
++        }
++
+         let mut segments = Vec::new();
+         for item in &selections.status_line_items {
+             if let Some(value) = self.status_line_value_for_item(*item) {
+@@ -293,6 +304,7 @@ impl ChatWidget {
+     /// warnings once, synchronizes shared cached state (such as git-branch
+     /// lookup), then renders each surface from that shared snapshot.
+     pub(crate) fn refresh_status_surfaces(&mut self) {
++        self.refresh_status_line_command_if_due();
+         let selections = self.status_surface_selections();
+         self.warn_invalid_status_line_items_once(&selections.invalid_status_line_items);
+         self.warn_invalid_terminal_title_items_once(&selections.invalid_terminal_title_items);
+diff --git a/codex-rs/tui/src/chatwidget/tests/status_and_layout.rs b/codex-rs/tui/src/chatwidget/tests/status_and_layout.rs
+index 6b72898912..bae88ec133 100644
+--- a/codex-rs/tui/src/chatwidget/tests/status_and_layout.rs
++++ b/codex-rs/tui/src/chatwidget/tests/status_and_layout.rs
+@@ -1,4 +1,7 @@
+ use super::*;
++use crate::bottom_pane::CollaborationModeIndicator;
++use crate::bottom_pane::GoalStatusIndicator;
++use crate::bottom_pane::StatusLine;
+ use crate::bottom_pane::goal_status_indicator_line;
+ use crate::chatwidget::ThreadUsageOutcome;
+ use crate::chatwidget::rate_limits::NUDGE_MODEL_SLUG;
+@@ -7,6 +10,11 @@ use codex_app_server_protocol::SpendControlLimitSnapshot;
+ use codex_app_server_protocol::ThreadUsage;
+ use pretty_assertions::assert_eq;
+ use ratatui::backend::TestBackend;
++use ratatui::style::Color;
++use ratatui::style::Modifier;
++use ratatui::style::Style;
++use ratatui::text::Line;
++use ratatui::text::Span;
+ use serial_test::serial;
+ 
+ fn enable_test_ambient_pet(chat: &mut ChatWidget) {
+@@ -25,6 +33,325 @@ fn take_workspace_headline_request_id(
+     }
+ }
+ 
++fn render_chatwidget_at_width(chat: &mut ChatWidget, width: u16) -> String {
++    let height = chat.desired_height(width);
++    let mut terminal =
++        ratatui::Terminal::new(TestBackend::new(width, height)).expect("create terminal");
++    terminal
++        .draw(|frame| chat.render(frame.area(), frame.buffer_mut()))
++        .expect("render chat widget");
++    normalized_backend_snapshot(terminal.backend())
++}
++
++fn multiline_status_line() -> Option<StatusLine> {
++    StatusLine::from_fields(vec![
++        Line::from("gpt-5.4 high"),
++        Line::from("feature/multiline-footer"),
++        Line::from("Context 70% used"),
++        Line::from("123K used"),
++    ])
++}
++
++#[tokio::test]
++async fn status_line_narrow_terminal_uses_all_required_footer_rows_snapshot() {
++    let (mut chat, _rx, _ops) = make_chatwidget_manual(/*model_override*/ None).await;
++    chat.show_welcome_banner = false;
++    chat.bottom_pane.set_status_line_enabled(/*enabled*/ true);
++    chat.set_status_line(multiline_status_line());
++
++    let width = 28;
++    let height = chat.desired_height(width);
++    let rendered = render_chatwidget_at_width(&mut chat, width);
++    let values = [
++        "gpt-5.4 high",
++        "feature/multiline-footer",
++        "Context 70% used",
++        "123K used",
++    ];
++    for value in values {
++        assert_eq!(rendered.matches(value).count(), 1);
++    }
++    assert!(
++        rendered
++            .lines()
++            .filter(|line| values.iter().any(|value| line.contains(value)))
++            .count()
++            >= 3
++    );
++    assert!(!rendered.contains('…'));
++    assert!(
++        height >= 7,
++        "expected three or more footer rows, got {height}"
++    );
++    assert_chatwidget_snapshot!(
++        "status_line_narrow_terminal_uses_all_required_footer_rows",
++        rendered
++    );
++}
++
++#[tokio::test]
++async fn status_line_mixed_rows_only_separate_shared_fields_snapshot() {
++    let (mut chat, _rx, _ops) = make_chatwidget_manual(/*model_override*/ None).await;
++    chat.show_welcome_banner = false;
++    chat.bottom_pane.set_status_line_enabled(/*enabled*/ true);
++    chat.set_status_line(StatusLine::from_fields(vec![
++        Line::from("alpha"),
++        Line::from("beta"),
++        Line::from("long-status"),
++        Line::from("end"),
++    ]));
++
++    let width = 18;
++    let height = chat.desired_height(width);
++    let mut terminal =
++        ratatui::Terminal::new(TestBackend::new(width, height)).expect("create terminal");
++    terminal
++        .draw(|frame| chat.render(frame.area(), frame.buffer_mut()))
++        .expect("render mixed footer rows");
++    let footer_rows = (height.saturating_sub(3)..height)
++        .map(|y| {
++            (0..width)
++                .map(|x| terminal.backend().buffer()[(x, y)].symbol())
++                .collect::<String>()
++                .trim_end()
++                .to_string()
++        })
++        .collect::<Vec<_>>();
++
++    assert_eq!(
++        footer_rows,
++        vec![
++            "  alpha · beta".to_string(),
++            "  long-status".to_string(),
++            "  end".to_string(),
++        ]
++    );
++    assert_chatwidget_snapshot!(
++        "status_line_mixed_rows_only_separate_shared_fields",
++        normalized_backend_snapshot(terminal.backend())
++    );
++}
++
++#[tokio::test]
++async fn status_line_unicode_graphemes_and_styles_survive_widget_reflow_snapshot() {
++    let (mut chat, _rx, _ops) = make_chatwidget_manual(/*model_override*/ None).await;
++    chat.show_welcome_banner = false;
++    chat.bottom_pane.set_status_line_enabled(/*enabled*/ true);
++    chat.set_status_line(StatusLine::from_fields(vec![
++        Line::from(vec![
++            Span::styled("模型", Style::default().fg(Color::Red)),
++            Span::styled(
++                "👩‍💻",
++                Style::default()
++                    .fg(Color::Cyan)
++                    .add_modifier(Modifier::UNDERLINED),
++            ),
++            Span::styled("e\u{301}", Style::default().fg(Color::Magenta)),
++            Span::styled("状态", Style::default().fg(Color::Green)),
++        ]),
++        Line::from("done"),
++    ]));
++
++    let width = 12;
++    let height = chat.desired_height(width);
++    let mut terminal =
++        ratatui::Terminal::new(TestBackend::new(width, height)).expect("create terminal");
++    terminal
++        .draw(|frame| chat.render(frame.area(), frame.buffer_mut()))
++        .expect("render unicode footer rows");
++    let rendered = normalized_backend_snapshot(terminal.backend());
++    assert!(rendered.contains("模型👩‍💻e\u{301}状"));
++    assert!(rendered.contains("态 · done"));
++
++    let area = terminal.backend().buffer().area;
++    let find_cell = |grapheme: &str| {
++        (area.top()..area.bottom())
++            .flat_map(|y| (area.left()..area.right()).map(move |x| (x, y)))
++            .find(|&(x, y)| terminal.backend().buffer()[(x, y)].symbol() == grapheme)
++            .expect("styled status grapheme")
++    };
++    let chinese = find_cell("模");
++    let emoji = find_cell("👩‍💻");
++    let combining = find_cell("e\u{301}");
++    let final_chinese = find_cell("态");
++    assert_eq!(chinese.1, emoji.1);
++    assert_eq!(emoji.1, combining.1);
++    assert!(chinese.0 < emoji.0);
++    assert!(emoji.0 < combining.0);
++    assert!(final_chinese.1 > combining.1);
++    assert_eq!(
++        terminal.backend().buffer()[chinese].style().fg,
++        Some(Color::Red)
++    );
++    assert_eq!(
++        terminal.backend().buffer()[emoji].style().fg,
++        Some(Color::Cyan)
++    );
++    assert!(
++        terminal.backend().buffer()[emoji]
++            .style()
++            .add_modifier
++            .contains(Modifier::UNDERLINED)
++    );
++    assert_eq!(
++        terminal.backend().buffer()[combining].style().fg,
++        Some(Color::Magenta)
++    );
++    assert_chatwidget_snapshot!(
++        "status_line_unicode_graphemes_and_styles_survive_widget_reflow",
++        rendered
++    );
++}
++
++#[tokio::test]
++async fn status_line_resize_reflows_and_restores_wide_footer() {
++    let (mut chat, _rx, _ops) = make_chatwidget_manual(/*model_override*/ None).await;
++    chat.show_welcome_banner = false;
++    chat.bottom_pane.set_status_line_enabled(/*enabled*/ true);
++    chat.set_status_line(multiline_status_line());
++
++    let wide_height_before = chat.desired_height(/*width*/ 100);
++    let wide_before = render_chatwidget_at_width(&mut chat, /*width*/ 100);
++    let narrow_height = chat.desired_height(/*width*/ 28);
++    let narrow = render_chatwidget_at_width(&mut chat, /*width*/ 28);
++    let wide_height_after = chat.desired_height(/*width*/ 100);
++    let wide_after = render_chatwidget_at_width(&mut chat, /*width*/ 100);
++
++    assert!(narrow_height > wide_height_before);
++    assert_eq!(wide_height_after, wide_height_before);
++    assert_ne!(narrow, wide_before);
++    assert_eq!(wide_after, wide_before);
++    let wide_footer = wide_after
++        .lines()
++        .find(|line| line.contains("gpt-5.4 high"))
++        .map(|line| line.trim_matches('"').trim())
++        .expect("wide status footer");
++    assert_eq!(
++        wide_footer.trim(),
++        "gpt-5.4 high · feature/multiline-footer · Context 70% used · 123K used"
++    );
++}
++
++#[tokio::test]
++async fn status_line_right_indicators_preserve_multiline_footer_fields_snapshot() {
++    let (mut chat, _rx, _ops) = make_chatwidget_manual(/*model_override*/ None).await;
++    chat.show_welcome_banner = false;
++    chat.bottom_pane.set_status_line_enabled(/*enabled*/ true);
++    chat.bottom_pane
++        .set_collaboration_modes_enabled(/*enabled*/ true);
++    chat.bottom_pane
++        .set_collaboration_mode_indicator(Some(CollaborationModeIndicator::Plan));
++    chat.bottom_pane.set_ide_context_active(/*active*/ true);
++    chat.set_status_line(multiline_status_line());
++
++    let rendered = render_chatwidget_at_width(&mut chat, /*width*/ 28);
++    for value in [
++        "gpt-5.4 high",
++        "feature/multiline-footer",
++        "Context 70% used",
++        "123K used",
++    ] {
++        assert_eq!(rendered.matches(value).count(), 1);
++    }
++    assert!(rendered.contains("Plan mode"));
++    assert!(rendered.contains("IDE context"));
++    assert_chatwidget_snapshot!(
++        "status_line_right_indicators_preserve_multiline_footer_fields",
++        rendered
++    );
++}
++
++#[tokio::test]
++async fn status_line_goal_indicator_preserves_multiline_footer_fields_snapshot() {
++    let (mut chat, _rx, _ops) = make_chatwidget_manual(/*model_override*/ None).await;
++    chat.show_welcome_banner = false;
++    chat.bottom_pane.set_status_line_enabled(/*enabled*/ true);
++    chat.bottom_pane
++        .set_goal_status_indicator(Some(GoalStatusIndicator::Paused));
++    chat.set_status_line(multiline_status_line());
++
++    let width = 28;
++    let height = chat.desired_height(width);
++    let mut terminal =
++        ratatui::Terminal::new(TestBackend::new(width, height)).expect("create terminal");
++    terminal
++        .draw(|frame| chat.render(frame.area(), frame.buffer_mut()))
++        .expect("render goal status footer");
++    let rendered = normalized_backend_snapshot(terminal.backend());
++    for value in [
++        "gpt-5.4 high",
++        "feature/multiline-footer",
++        "Context 70% used",
++        "123K used",
++    ] {
++        assert_eq!(rendered.matches(value).count(), 1);
++    }
++    let final_row = (0..width)
++        .map(|x| terminal.backend().buffer()[(x, height.saturating_sub(1))].symbol())
++        .collect::<String>();
++    assert_eq!(final_row, "  Goal paused (/goal resume)");
++    assert_chatwidget_snapshot!(
++        "status_line_goal_indicator_preserves_multiline_footer_fields",
++        rendered
++    );
++}
++
++#[tokio::test]
++async fn status_line_hyperlink_marks_later_row_pull_request_number_cells() {
++    let (mut chat, _rx, _ops) = make_chatwidget_manual(/*model_override*/ None).await;
++    chat.show_welcome_banner = false;
++    chat.bottom_pane.set_status_line_enabled(/*enabled*/ true);
++    chat.set_status_line(StatusLine::from_fields(vec![
++        Line::from("gpt-5.4 high"),
++        Line::from("feature/multiline-footer"),
++        Line::from("Context 70% used"),
++        Line::from(Span::styled(
++            "PR #20252",
++            Style::default().cyan().underlined(),
++        )),
++    ]));
++    let url = "https://github.com/openai/codex/pull/20252";
++    chat.set_status_line_hyperlink(Some(url.to_string()));
++
++    let width = 28;
++    let height = chat.desired_height(width);
++    let mut terminal =
++        ratatui::Terminal::new(TestBackend::new(width, height)).expect("create terminal");
++    terminal
++        .draw(|frame| chat.render(frame.area(), frame.buffer_mut()))
++        .expect("render linked status footer");
++    let area = terminal.backend().buffer().area;
++    let marked_cells = (area.top()..area.bottom())
++        .flat_map(|y| (area.left()..area.right()).map(move |x| (x, y)))
++        .filter(|&(x, y)| terminal.backend().buffer()[(x, y)].symbol().contains(url))
++        .collect::<Vec<_>>();
++
++    assert_eq!(
++        marked_cells.len(),
++        "PR #20252".chars().filter(|ch| !ch.is_whitespace()).count()
++    );
++    let first_status_row = (area.top()..area.bottom())
++        .find(|&y| {
++            (area.left()..area.right())
++                .map(|x| terminal.backend().buffer()[(x, y)].symbol())
++                .collect::<String>()
++                .contains("gpt-5.4 high")
++        })
++        .expect("first status row");
++    assert!(
++        marked_cells.iter().all(|&(_, y)| y > first_status_row),
++        "PR hyperlink cells must be on a later status row"
++    );
++    let hyperlink_open = format!("\x1b]8;;{url}\x07");
++    let visible_footer = (area.top()..area.bottom())
++        .flat_map(|y| (area.left()..area.right()).map(move |x| (x, y)))
++        .map(|(x, y)| terminal.backend().buffer()[(x, y)].symbol())
++        .collect::<String>()
++        .replace(&hyperlink_open, "")
++        .replace("\x1b]8;;\x07", "");
++    assert!(visible_footer.contains("PR #20252"));
++}
++
+ /// Receiving a token usage update without usage clears the context indicator.
+ #[tokio::test]
+ async fn token_count_none_resets_context_indicator() {
+diff --git a/codex-rs/tui/src/chatwidget/tests/status_surface_previews.rs b/codex-rs/tui/src/chatwidget/tests/status_surface_previews.rs
+index 0a830ff9f7..690e04351f 100644
+--- a/codex-rs/tui/src/chatwidget/tests/status_surface_previews.rs
++++ b/codex-rs/tui/src/chatwidget/tests/status_surface_previews.rs
+@@ -16,7 +16,7 @@ fn status_preview_line_option(chat: &mut ChatWidget, items: &[StatusLineItem]) -
+     let preview_data = chat.status_surface_preview_data();
+     preview_data
+         .status_line_for_items(items.iter().copied(), /*use_theme_colors*/ true)
+-        .map(line_text)
++        .map(|status| status.text())
+ }
+ 
+ fn status_preview_line(chat: &mut ChatWidget, items: &[StatusLineItem]) -> String {
