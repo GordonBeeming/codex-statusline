@@ -8,6 +8,7 @@ import plistlib
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -44,7 +45,10 @@ def main() -> None:
     updater = share / "update.py"
     packaged_updater = share / "current/updater/update.py"
     source = packaged_updater if packaged_updater.is_file() else Path(__file__).with_name("update.py")
-    shutil.copyfile(source, updater)
+    with tempfile.TemporaryDirectory(prefix=".updater-", dir=share) as temporary:
+        staged = Path(temporary) / "update.py"
+        shutil.copyfile(source, staged)
+        staged.replace(updater)
     agent.parent.mkdir(parents=True, exist_ok=True)
     environment_path = os.environ.get("PATH", "/usr/bin:/bin")
     agent.write_bytes(plistlib.dumps({
