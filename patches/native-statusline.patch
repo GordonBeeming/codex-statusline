@@ -2989,7 +2989,7 @@ index 755da1e626..dbcc79d612 100644
              current_goal_status_indicator: None,
              current_goal_status: None,
 diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__side_context_label_shows_parent_status.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__side_context_label_shows_parent_status.snap
-index 47258c1616..29b875f34d 100644
+index 47258c1616..510298d575 100644
 --- a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__side_context_label_shows_parent_status.snap
 +++ b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__side_context_label_shows_parent_status.snap
 @@ -6,4 +6,5 @@ expression: terminal.backend()
@@ -3110,10 +3110,10 @@ index 6dc0ab9077..17baf79738 100644
  
 diff --git a/codex-rs/tui/src/chatwidget/status_line_command.rs b/codex-rs/tui/src/chatwidget/status_line_command.rs
 new file mode 100644
-index 0000000000..68c5b3ec10
+index 0000000000..4ad6f918c3
 --- /dev/null
 +++ b/codex-rs/tui/src/chatwidget/status_line_command.rs
-@@ -0,0 +1,363 @@
+@@ -0,0 +1,368 @@
 +//! Command-backed custom status-line execution and payload generation.
 +
 +use super::*;
@@ -3300,6 +3300,11 @@ index 0000000000..68c5b3ec10
 +            .last_requested_at
 +            .is_none_or(|last| now.saturating_duration_since(last) >= refresh_interval);
 +        if !payload_changed && !interval_elapsed {
++            if let Some(last) = self.status_line_command.last_requested_at {
++                self.frame_requester.schedule_frame_in(
++                    refresh_interval.saturating_sub(now.saturating_duration_since(last)),
++                );
++            }
 +            return;
 +        }
 +
@@ -3479,10 +3484,10 @@ index 0000000000..68c5b3ec10
 +mod tests;
 diff --git a/codex-rs/tui/src/chatwidget/status_line_command_tests.rs b/codex-rs/tui/src/chatwidget/status_line_command_tests.rs
 new file mode 100644
-index 0000000000..e9ce1c810e
+index 0000000000..22257dfc58
 --- /dev/null
 +++ b/codex-rs/tui/src/chatwidget/status_line_command_tests.rs
-@@ -0,0 +1,55 @@
+@@ -0,0 +1,79 @@
 +use super::*;
 +use pretty_assertions::assert_eq;
 +
@@ -3537,6 +3542,30 @@ index 0000000000..e9ce1c810e
 +        sanitize_status_line("\u{1b}[31mred\u{1b}[0m\u{1b}]0;owned\u{7}safe\u{202e}"),
 +        "\u{1b}[31mred\u{1b}[0msafe"
 +    );
++}
++
++#[tokio::test]
++async fn idle_status_line_command_schedules_the_next_refresh() {
++    let (mut chat, _sender, _events, _operations) =
++        crate::chatwidget::tests::make_chatwidget_manual_with_sender().await;
++    let mut config = command(&["sh", "-c", "cat"]);
++    config.refresh_interval_ms = 60_000;
++    chat.config.tui_status_line_command = Some(config);
++    let (requester, mut frames) = crate::tui::FrameRequester::test_channel();
++    chat.frame_requester = requester;
++    let now = Instant::now();
++    chat.request_status_line_command_if_due(now);
++    let request_id = chat
++        .status_line_command
++        .pending_request_id
++        .expect("request started");
++    assert!(chat.set_status_line_command_output(request_id, Ok(Some(vec!["ready".into()]))));
++    assert!(chat.status_line_command.pending_request_id.is_none());
++    let scheduled = frames.try_recv().expect("idle refresh scheduled");
++    assert!(scheduled > now + Duration::from_secs(55));
++    assert!(scheduled < now + Duration::from_secs(61));
++    chat.request_status_line_command_if_due(now + Duration::from_secs(60));
++    assert!(chat.status_line_command.pending_request_id.is_some());
 +}
 diff --git a/codex-rs/tui/src/chatwidget/status_surfaces.rs b/codex-rs/tui/src/chatwidget/status_surfaces.rs
 index 616dd6df1e..301a361083 100644

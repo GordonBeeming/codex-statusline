@@ -87,9 +87,9 @@ def validate_package(package: Path, expected: str) -> None:
                    check=True, capture_output=True, text=True, timeout=10)
 
 
-def activate(release: Path, share: Path, bin_dir: Path) -> None:
+def activate(release: Path, share: Path, bin_dir: Path, preserve_previous: bool = False) -> None:
     current = share / "current"
-    if current.is_symlink() and current.resolve() != release.resolve():
+    if not preserve_previous and current.is_symlink() and current.resolve() != release.resolve():
         switch_link(share / "previous", current.resolve())
     switch_link(bin_dir / "codex-statusline", current / "bin/codex")
     packaged_updater = release / "updater/update.py"
@@ -121,6 +121,8 @@ def install_archive(archive: Path, manifest: dict, share: Path, bin_dir: Path) -
     releases = share / "releases"
     releases.mkdir(parents=True, exist_ok=True)
     release = releases / version
+    current_name = (share / "current").resolve().name
+    repairing_current = current_name == version or current_name.startswith(f"{version}.repair-")
     with tempfile.TemporaryDirectory(prefix=".update-", dir=share) as temporary:
         staged = Path(temporary) / "package"
         staged.mkdir()
@@ -139,7 +141,7 @@ def install_archive(archive: Path, manifest: dict, share: Path, bin_dir: Path) -
                 staged.rename(release)
         else:
             staged.rename(release)
-    activate(release, share, bin_dir)
+    activate(release, share, bin_dir, preserve_previous=repairing_current)
     print(f"Installed {version}. New sessions will use it.")
 
 

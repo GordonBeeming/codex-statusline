@@ -127,6 +127,16 @@ class UpdateTests(unittest.TestCase):
         (self.share / "current/statusline-release.json").write_text("broken json")
         self.install()
         self.assertEqual(updater.installed_manifest(self.share / "current/statusline-release.json"), self.manifest)
+        self.assertEqual((self.share / "previous").resolve(), self.old)
+
+    def test_repairing_the_active_release_keeps_the_last_working_rollback(self):
+        self.package()
+        self.install()
+        for attempt in range(2):
+            (self.share / "current/bin/codex").unlink()
+            self.install()
+            self.assertTrue((self.share / "current/bin/codex").is_file())
+            self.assertEqual((self.share / "previous").resolve(), self.old)
 
     def test_damaged_orphan_package_is_repaired(self):
         self.package()
