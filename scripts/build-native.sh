@@ -80,7 +80,7 @@ if [[ ${CODEX_STATUSLINE_NATIVE_TESTS:-0} == 1 ]]; then
     cd "$source_dir/codex-rs"
     native_target=$(rustc +"$RUST_TOOLCHAIN" -vV | awk '/^host:/ {print $2}')
     RUSTUP_TOOLCHAIN="$RUST_TOOLCHAIN" just test -p codex-tui --lib \
-      --cargo-profile "$coding_profile" --target "$native_target" \
+      --cargo-profile dev --target "$native_target" \
       -E 'test(bottom_pane::) | test(status_line) | test(multiline_status) | test(status_surface) | test(side_context_label_shows_parent_status)'
   )
 fi
