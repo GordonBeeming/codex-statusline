@@ -61,8 +61,14 @@ class UpdateTests(unittest.TestCase):
         self.assertEqual((self.share / "update.py").read_bytes(), b"print('packaged updater')\n")
 
     def test_downgrade_is_rejected_before_archive_download(self):
+        self.assert_downgrade_rejected("0.160.0-statusline.3")
+
+    def test_same_upstream_patch_downgrade_is_rejected(self):
+        self.assert_downgrade_rejected("0.159.3-statusline.4")
+
+    def assert_downgrade_rejected(self, installed_version):
         self.package()
-        (self.old / "statusline-release.json").write_text(json.dumps({"version": "0.160.0+statusline.3"}))
+        (self.old / "statusline-release.json").write_text(json.dumps({"cli_version": installed_version}))
         release = {"tag_name": self.manifest["tag"], "assets": [{
             "name": f"{updater.PLATFORM}.json", "browser_download_url": "manifest",
         }]}

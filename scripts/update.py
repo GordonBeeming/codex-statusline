@@ -65,6 +65,13 @@ def installed_manifest(path: Path) -> dict | None:
         return None
 
 
+def cli_version_components(value: object) -> tuple[int, ...] | None:
+    if not isinstance(value, str):
+        return None
+    match = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)-statusline\.(\d+)", value)
+    return tuple(int(part) for part in match.groups()) if match else None
+
+
 def validate_package(package: Path, expected: str) -> None:
     result = subprocess.run([str(package / "bin/codex"), "--version"],
                             check=True, capture_output=True, text=True, timeout=30)
@@ -103,7 +110,7 @@ def install_archive(archive: Path, manifest: dict, share: Path, bin_dir: Path) -
     if manifest.get("platform") != PLATFORM:
         raise ValueError("Release platform mismatch")
     expected = manifest.get("cli_version", "")
-    if not re.fullmatch(r"\d+\.\d+\.\d+-statusline\.\d+", expected):
+    if cli_version_components(expected) is None:
         raise ValueError("Invalid CLI version")
     digest = hashlib.sha256()
     with archive.open("rb") as handle:
@@ -172,10 +179,12 @@ def update(share: Path, bin_dir: Path) -> None:
                         activate((share / "current").resolve(), share, bin_dir)
                         print(f"Already current: {installed['version']}")
                         return
-                def upstream_version(value: dict) -> tuple[int, ...]:
-                    return tuple(int(part) for part in value["version"].split("+")[0].split("."))
-                if re.fullmatch(r"\d+\.\d+\.\d+\+statusline\..+", installed.get("version", "")) and upstream_version(manifest) < upstream_version(installed):
-                    raise ValueError("Refusing an upstream version downgrade")
+                candidate_version = cli_version_components(manifest.get("cli_version"))
+                current_version = cli_version_components(installed.get("cli_version"))
+                if candidate_version is None:
+                    raise ValueError("Invalid CLI version")
+                if current_version is not None and candidate_version < current_version:
+                    raise ValueError("Refusing a CLI version downgrade")
             archive = Path(temporary) / "package.tar.gz"
             download(assets[f"codex-statusline-{PLATFORM}.tar.gz"], archive)
             install_archive(archive, manifest, share, bin_dir)
