@@ -55,8 +55,13 @@ make_bar() {
   (( pct >= 90 )) && color="$RED"
   if (( pct >= 70 && pct < 90 )); then color="$YELLOW"; fi
   printf '%s' "$color"
-  printf "%${filled}s" | tr ' ' '█'
-  printf "%${empty}s" | tr ' ' '░'
+  local block
+  for ((block = 0; block < filled; block++)); do
+    printf '█'
+  done
+  for ((block = 0; block < empty; block++)); do
+    printf '░'
+  done
   printf '%s' "$RESET"
 }
 
