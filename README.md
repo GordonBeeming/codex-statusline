@@ -167,6 +167,9 @@ applies the patch, runs the status-line TUI tests, and builds the canonical pack
 builds are published. Each release includes the resolved `upstream.lock`, patch, package, and checksum
 manifest. The checked-in lock remains the baseline for reproducible source builds.
 
+The TUI tests use the upstream development profile because their command snapshots and recovery
+checks expect debug-only commands. Published packages still use the optimized release profile.
+
 When an upstream change conflicts with the patch or fails its tests, the workflow fails and retains
 the last public release. A maintainer must port the patch, update its checksum and baseline lock,
 and push the fix before updates resume. Enable GitHub Actions failure notifications to catch these
