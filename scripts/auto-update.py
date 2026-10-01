@@ -42,7 +42,9 @@ def main() -> None:
         return
     share.mkdir(parents=True, exist_ok=True)
     updater = share / "update.py"
-    shutil.copyfile(Path(__file__).with_name("update.py"), updater)
+    packaged_updater = share / "current/updater/update.py"
+    source = packaged_updater if packaged_updater.is_file() else Path(__file__).with_name("update.py")
+    shutil.copyfile(source, updater)
     agent.parent.mkdir(parents=True, exist_ok=True)
     environment_path = os.environ.get("PATH", "/usr/bin:/bin")
     agent.write_bytes(plistlib.dumps({

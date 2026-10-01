@@ -14,8 +14,18 @@ spec.loader.exec_module(auto_update)
 
 class ScheduleTests(unittest.TestCase):
     def test_enable_writes_background_schedule_and_disable_removes_it(self):
+        self.assert_schedule_lifecycle(packaged=False)
+
+    def test_enable_preserves_the_installed_package_updater(self):
+        self.assert_schedule_lifecycle(packaged=True)
+
+    def assert_schedule_lifecycle(self, packaged):
         with tempfile.TemporaryDirectory() as temporary:
             home = Path(temporary)
+            if packaged:
+                updater = home / "share/current/updater/update.py"
+                updater.parent.mkdir(parents=True)
+                updater.write_text("print('installed package updater')\n")
             def launchctl(arguments, **kwargs):
                 return subprocess.CompletedProcess(arguments, 1 if arguments[1] == "print" else 0)
             with patch.object(auto_update.Path, "home", return_value=home), \
@@ -30,6 +40,8 @@ class ScheduleTests(unittest.TestCase):
                 self.assertEqual(config["StartInterval"], 21600)
                 self.assertTrue(config["RunAtLoad"])
                 self.assertTrue((home / "share/update.py").is_file())
+                if packaged:
+                    self.assertEqual((home / "share/update.py").read_text(), "print('installed package updater')\n")
                 self.assertEqual(run.call_args.args[0][1], "bootstrap")
                 with patch.object(auto_update.sys, "argv", ["auto-update.py", "disable"]):
                     auto_update.main()
