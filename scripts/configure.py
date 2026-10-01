@@ -61,5 +61,5 @@ if __name__ == "__main__":
     args = parser.parse_args()
     update_config(
         Path(os.environ.get("CODEX_HOME", home / ".codex")) / "config.toml",
-        args.renderer.expanduser().resolve(),
+        args.renderer.expanduser().absolute(),
     )

@@ -32,19 +32,46 @@ The related upstream requests are
 accept external pull requests, so this project ships a reviewable patch against one pinned upstream
 commit instead of maintaining a full source fork.
 
-## Build and install
+## Install and keep up to date
+
+On Apple Silicon macOS, install Python 3.12+ and `jq`, clone this repository, then run:
+
+```bash
+./install.sh --auto-update
+```
+
+The installer downloads the latest tested public package, verifies its SHA-256 checksum and CLI
+version, and configures the renderer. The optional `--auto-update` flag installs a user LaunchAgent
+that checks every six hours and at login. Updates take effect in new CLI sessions; running sessions
+continue using their current binary. Downloads and failed checks leave the installed release intact.
+
+To update immediately or disable background checks:
+
+```bash
+python3 scripts/update.py
+python3 scripts/auto-update.py disable
+```
+
+Update logs are in `~/.local/share/codex-statusline/update.log` and `update-error.log`. The `previous`
+symlink records the preceding installation. The official `codex` command remains available.
+Older packages are retained so you can launch `previous/bin/codex` from the share directory for
+rollback. Remove unused release directories when you no longer need them; never remove `current`
+or a package still used by a running session. Each release also carries the updater for future checks.
+Automatic updates trust packages published by this repository; checksums detect damaged downloads,
+but are not an independent signature. Packages are currently neither signed nor notarized.
+
+## Build from source
 
 Requirements:
 
 - macOS on Apple Silicon for the currently tested package
-- Git, Rustup, Python 3.10+, DotSlash, and `jq`
-- `jq` for the renderer
+- Git, Rustup, Python 3.12+, DotSlash, and `jq`
 - Enough free disk space for a Codex release build
 
 Run:
 
 ```bash
-./install.sh
+./install.sh --source
 ```
 
 The builder:
@@ -59,7 +86,7 @@ The builder:
 The official npm-managed `codex` command is left untouched as a rollback path.
 
 The default is a release-profile build. For a faster, much larger local trial build, run
-`CODEX_STATUSLINE_CARGO_PROFILE=dev ./install.sh`.
+`CODEX_STATUSLINE_CARGO_PROFILE=dev ./install.sh --source`.
 
 ## Configure Codex
 
@@ -127,21 +154,28 @@ cargo check -p codex-tui
 just test -p codex-tui
 ```
 
-The local full TUI run executed 4,113 tests. All new command-renderer and multiline-footer tests
-passed. Remaining failures were pre-existing locale and terminal/editor-environment snapshots in
-unchanged code paths.
+For the 0.159.3 port, 1,163 TUI tests covering the release gate passed locally, including the
+command renderer, bottom pane, and multiline footer. The broader TUI suite is not green locally:
+failures include upstream snapshots expecting version `0.0.0`, terminal/editor assumptions, and
+timeouts. Public builds use the focused gate defined in `scripts/build-native.sh`.
 
 ## Updating upstream
 
-Updates are intentionally manual:
+The `Track Codex releases` GitHub Actions workflow checks the latest stable OpenAI release every
+six hours, on pushes to `main`, and on manual dispatch. It resolves the release to an exact commit,
+applies the patch, runs the status-line TUI tests, and builds the canonical package. Only successful
+builds are published. Each release includes the resolved `upstream.lock`, patch, package, and checksum
+manifest. The checked-in lock remains the baseline for reproducible source builds.
 
-1. Advance `UPSTREAM_COMMIT` and `UPSTREAM_VERSION` in `upstream.lock`.
-2. Rebase the patch against that exact commit.
-3. Regenerate `PATCH_SHA256`.
-4. Run Codex formatting, schema generation, focused tests, and the full TUI suite.
-5. Build into a new versioned release directory and switch `current` only after verification.
+When an upstream change conflicts with the patch or fails its tests, the workflow fails and retains
+the last public release. A maintainer must port the patch, update its checksum and baseline lock,
+and push the fix before updates resume. Enable GitHub Actions failure notifications to catch these
+breaks. Automation cannot guarantee compatibility with arbitrary upstream source changes.
 
-The previous official `codex` installation remains available even if a patched build fails.
+Scheduled workflows run from the default branch, so changes to the automation must be merged there
+before public updates start. GitHub may disable schedules after 60 days without repository activity;
+re-enable the workflow in Actions if that happens. Local checks require a published package and an
+active macOS login session. They do not compile Rust on your machine.
 
 ## License and attribution
 

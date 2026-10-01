@@ -18,4 +18,13 @@ config="$test_home/.codex/config.toml"
 grep -Fq 'status_line = ["model"]' "$config"
 grep -Fq "$renderer" "$config"
 
+mkdir -p "$test_home/releases/one/renderer"
+ln -s "$test_home/releases/one" "$test_home/current"
+HOME="$test_home" python3 "$repo_root/scripts/configure.py" --renderer "$test_home/current/renderer/statusline.sh"
+grep -Fq "$test_home/current/renderer/statusline.sh" "$config"
+if grep -Fq "$test_home/releases/one/renderer/statusline.sh" "$config"; then
+  printf 'configuration resolved the current symlink\n' >&2
+  exit 1
+fi
+
 printf 'configure tests passed\n'
