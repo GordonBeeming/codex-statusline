@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+export GIT_TERMINAL_PROMPT=0
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 # shellcheck source=../upstream.lock
@@ -7,6 +8,7 @@ source "$repo_root/upstream.lock"
 
 "$repo_root/tests/renderer-tests.sh"
 "$repo_root/tests/configure-tests.sh"
+python3 -m unittest discover -s "$repo_root/tests" -p '*_test.py'
 
 if command -v shasum >/dev/null 2>&1; then
   actual_patch_sha=$(shasum -a 256 "$repo_root/patches/native-statusline.patch" | awk '{print $1}')

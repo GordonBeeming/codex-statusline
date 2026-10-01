@@ -1,0 +1,101 @@
+name: Track Codex releases
+
+on:
+  schedule:
+    - cron: '23 */6 * * *'
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: codex-release
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 180
+    outputs:
+      tag: ${{ steps.prepare.outputs.tag }}
+      publish: ${{ steps.existing.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - id: prepare
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python scripts/prepare-release.py
+      - id: existing
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.prepare.outputs.tag }}
+        run: |
+          gh api --paginate "repos/$GITHUB_REPOSITORY/releases" > releases.json
+          if jq -se --arg tag "$TAG" 'add | any(.tag_name == $tag and .draft == false)' releases.json; then
+            echo 'publish=false' >> "$GITHUB_OUTPUT"
+          else
+            echo 'publish=true' >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.existing.outputs.publish == 'true'
+        run: |
+          brew install dotslash jq just cargo-nextest
+          bash tests/renderer-tests.sh
+          bash tests/configure-tests.sh
+          python -m unittest discover -s tests -p '*_test.py'
+      - if: steps.existing.outputs.publish == 'true'
+        name: Build and test native package
+        env:
+          CODEX_STATUSLINE_PYTHON: python
+          CODEX_STATUSLINE_SHARE_ROOT: ${{ runner.temp }}/statusline
+          CODEX_STATUSLINE_RELEASE_NAME: ${{ steps.prepare.outputs.release }}
+          CODEX_STATUSLINE_ACTIVATE: '0'
+          CODEX_STATUSLINE_NATIVE_TESTS: '1'
+          CARGO_PROFILE_RELEASE_DEBUG: '0'
+          CARGO_PROFILE_DEV_DEBUG: '0'
+          CARGO_INCREMENTAL: '0'
+          GIT_TERMINAL_PROMPT: '0'
+        run: bash scripts/build-native.sh
+      - if: steps.existing.outputs.publish == 'true'
+        env:
+          RELEASE: ${{ steps.prepare.outputs.release }}
+        run: |
+          python scripts/package-release.py --package "$RUNNER_TEMP/statusline/releases/$RELEASE" --version "$RELEASE" --output dist
+          cp patches/native-statusline.patch dist/
+      - if: steps.existing.outputs.publish == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: release
+          path: dist/
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    if: needs.build.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: release
+          path: dist
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.build.outputs.tag }}
+        run: |
+          gh api --paginate "repos/$GH_REPO/releases" > releases.json
+          if jq -se --arg tag "$TAG" 'add | any(.tag_name == $tag and .draft == false)' releases.json; then
+            echo 'Release is already public; refusing to replace its assets.'
+            exit 1
+          fi
+          if ! jq -se --arg tag "$TAG" 'add | any(.tag_name == $tag)' releases.json; then
+            gh release create "$TAG" --target "$GITHUB_SHA" --draft --title "$TAG" --notes 'Patched native Codex for Apple Silicon macOS. Built and tested against the upstream commit recorded in upstream.lock. Install using scripts/update.py.'
+          fi
+          gh release upload "$TAG" dist/* --clobber
+          gh release edit "$TAG" --draft=false --latest

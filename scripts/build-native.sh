@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+export GIT_TERMINAL_PROMPT=0
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 # shellcheck source=../upstream.lock
@@ -19,11 +20,11 @@ elif [[ -z "$python_bin" ]] && command -v python3 >/dev/null 2>&1; then
   python_bin=$(command -v python3)
 fi
 if [[ -z "$python_bin" ]]; then
-  printf 'Python 3.10 or newer is required to build Codex.\n' >&2
+  printf 'Python 3.12 or newer is required to build Codex.\n' >&2
   exit 1
 fi
-if ! "$python_bin" -c 'import sys; raise SystemExit(sys.version_info < (3, 10))'; then
-  printf 'Python 3.10 or newer is required: %s\n' "$python_bin" >&2
+if ! "$python_bin" -c 'import sys; raise SystemExit(sys.version_info < (3, 12))'; then
+  printf 'Python 3.12 or newer is required: %s\n' "$python_bin" >&2
   exit 1
 fi
 
@@ -59,10 +60,32 @@ git -C "$source_dir" checkout --detach "$UPSTREAM_COMMIT"
 git -C "$source_dir" apply --check "$patch_file"
 git -C "$source_dir" apply "$patch_file"
 
+"$python_bin" - "$source_dir/codex-rs/cli/Cargo.toml" "$EXPECTED_CLI_VERSION" <<'PY'
+import pathlib
+import re
+import sys
+manifest = pathlib.Path(sys.argv[1])
+text, count = re.subn(r'^version(?:\.workspace = true| = "[^"]+")$',
+                      f'version = "{sys.argv[2]}"', manifest.read_text(), count=1, flags=re.MULTILINE)
+if count != 1:
+    raise SystemExit("Cannot set CLI package version")
+manifest.write_text(text)
+PY
+
 rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --component rustfmt --component clippy
 
-release_name="${UPSTREAM_VERSION}+statusline.${PATCH_VERSION}"
 coding_profile=${CODEX_STATUSLINE_CARGO_PROFILE:-release}
+if [[ ${CODEX_STATUSLINE_NATIVE_TESTS:-0} == 1 ]]; then
+  (
+    cd "$source_dir/codex-rs"
+    native_target=$(rustc +"$RUST_TOOLCHAIN" -vV | awk '/^host:/ {print $2}')
+    RUSTUP_TOOLCHAIN="$RUST_TOOLCHAIN" just test -p codex-tui --lib \
+      --cargo-profile "$coding_profile" --target "$native_target" \
+      -E 'test(bottom_pane::) | test(status_line) | test(multiline_status) | test(status_surface) | test(side_context_label_shows_parent_status)'
+  )
+fi
+
+release_name=${CODEX_STATUSLINE_RELEASE_NAME:-"${UPSTREAM_VERSION}+statusline.${PATCH_VERSION}"}
 share_root=${CODEX_STATUSLINE_SHARE_ROOT:-"${HOME}/.local/share/codex-statusline"}
 release_dir="$share_root/releases/$release_name"
 if [[ -e "$release_dir" ]]; then
@@ -81,10 +104,20 @@ CODEX_REPO_ROOT="$source_dir" RUSTUP_TOOLCHAIN="$RUST_TOOLCHAIN" \
   --package-version "$release_name"
 
 mkdir -p "$staged_release/renderer" "$staged_release/THIRD_PARTY_NOTICES"
+mkdir -p "$staged_release/updater"
+cp "$repo_root/scripts/update.py" "$staged_release/updater/update.py"
 cp "$repo_root/renderer/statusline.sh" "$staged_release/renderer/statusline.sh"
 cp "$repo_root/LICENSE" "$staged_release/LICENSE"
 cp "$repo_root/THIRD_PARTY_NOTICES/"* "$staged_release/THIRD_PARTY_NOTICES/"
 chmod +x "$staged_release/renderer/statusline.sh"
+"$python_bin" - "$staged_release" "$release_name" "$EXPECTED_CLI_VERSION" <<'PY'
+import json
+import pathlib
+import sys
+pathlib.Path(sys.argv[1], "statusline-release.json").write_text(json.dumps({
+    "version": sys.argv[2], "cli_version": sys.argv[3], "source_build": True,
+}) + "\n")
+PY
 
 actual_version=$("$staged_release/bin/codex" --version)
 if [[ "$actual_version" != "codex-cli $EXPECTED_CLI_VERSION" ]]; then
@@ -98,6 +131,10 @@ if ! jq --arg cwd "$repo_root" '.cwd = $cwd' "$repo_root/tests/fixtures/status-p
 fi
 
 mv "$staged_release" "$release_dir"
+if [[ ${CODEX_STATUSLINE_ACTIVATE:-1} == 0 ]]; then
+  printf 'Built package: %s\n' "$release_dir"
+  exit 0
+fi
 current_link="$staging_root/current"
 ln -s "$release_dir" "$current_link"
 mv -f -h "$current_link" "$share_root/current"
