@@ -154,10 +154,10 @@ cargo check -p codex-tui
 just test -p codex-tui
 ```
 
-For the 0.159.3 port, 1,164 TUI tests covering the release gate passed locally, including the
-command renderer, bottom pane, and multiline footer. The broader TUI suite is not green locally:
-failures include upstream snapshots expecting version `0.0.0`, terminal/editor assumptions, and
-timeouts. Public builds use the focused gate defined in `scripts/build-native.sh`.
+For the 0.160.0 port, 1,166 TUI tests covering the release gate passed locally, including the
+command renderer, bottom pane, and multiline footer. Public builds use the focused gate defined in
+`scripts/build-native.sh`. The full upstream suite is outside this gate; its version-sensitive
+snapshots and terminal/editor tests need separate validation.
 
 ## Updating upstream
 

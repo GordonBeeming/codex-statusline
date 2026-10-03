@@ -851,10 +851,10 @@ index 5db883b7e6..33713e6095 100644
  }
  
 diff --git a/codex-rs/tui/src/bottom_pane/chat_composer/status_surface.rs b/codex-rs/tui/src/bottom_pane/chat_composer/status_surface.rs
-index 14fe0a9dbc..90eecc1e03 100644
+index 60ee2e0..bde8f04 100644
 --- a/codex-rs/tui/src/bottom_pane/chat_composer/status_surface.rs
 +++ b/codex-rs/tui/src/bottom_pane/chat_composer/status_surface.rs
-@@ -3,12 +3,45 @@
+@@ -3,31 +3,29 @@
  //! Shortcut help grows above the input, preserving status and close rows below it even when clipped.
  
  use super::*;
@@ -865,6 +865,12 @@ index 14fe0a9dbc..90eecc1e03 100644
          u16::from(options.separate_status_line && self.footer.status_line_enabled)
      }
  
+-    pub(super) fn hint_footer_props(&self, options: ComposerRenderOptions<'_>) -> FooterProps {
+-        let mut props = self.footer_props();
+-        if self.status_surface_height(options) > 0 {
+-            props.status_line_enabled = false;
+-            props.status_line_value = None;
+-            props.active_agent_label = None;
 +    pub(super) fn status_surface_height_for_width(
 +        &self,
 +        width: u16,
@@ -872,20 +878,63 @@ index 14fe0a9dbc..90eecc1e03 100644
 +    ) -> u16 {
 +        if self.status_surface_height(options) == 0 {
 +            return 0;
-+        }
-+        self.persistent_status_layout(width).height()
-+    }
-+
-+    fn persistent_status_layout(&self, width: u16) -> PassiveFooterLayout {
-+        let mut props = self.footer_props();
-+        props.mode = FooterMode::ComposerHasDraft;
-+        props.is_task_running = false;
+         }
+-        props
++        self.persistent_status_layout(width, options).height()
+     }
+ 
+-    pub(super) fn render_status_surface(
++    fn persistent_status_layout(
+         &self,
+-        area: Rect,
+-        buf: &mut Buffer,
++        width: u16,
+         options: ComposerRenderOptions<'_>,
+-    ) {
+-        if area.is_empty() {
+-            return;
+-        }
++    ) -> PassiveFooterLayout {
+         let mut props = self.footer_props();
+         let show_cycle_hint = !props.is_task_running
+             && !self.blocks_direct_input
+@@ -38,24 +36,71 @@ impl ChatComposer {
+                 FooterMode::ComposerEmpty | FooterMode::ComposerHasDraft
+             )
+             && options.footer.is_none_or(|footer| !footer.is_interactive);
+-        // Persistent context is independent of help, queue, search, and quit modes.
+         props.mode = FooterMode::ComposerHasDraft;
+         props.is_task_running = false;
+-        let line = passive_footer_status_line(&props);
 +        let mut status = passive_footer_status(&props);
-+        let right = self.mode_indicator_line(false);
-+        if let Some(value) = status.as_mut()
-+            && !value.has_fixed_rows()
-+        {
-+            let area = Rect::new(0, 0, width, 1);
+         let full = self.mode_indicator_line(show_cycle_hint);
+-        let left_width = line
+-            .as_ref()
+-            .map_or(/*default*/ 0, |line| line.width() as u16);
+-        let full_width = full
++        if status.as_ref().is_some_and(StatusLine::has_fixed_rows) {
++            return passive_footer_layout_with_indicator_fallback(
++                status.as_ref(),
++                width,
++                full,
++                self.mode_indicator_line(false),
++            );
++        }
++        let area = Rect::new(0, 0, width, 1);
++        let left_width = status
+             .as_ref()
+-            .map_or(/*default*/ 0, |line| line.width() as u16);
++            .map_or(0, |value| value.to_line().width() as u16);
++        let full_width = full.as_ref().map_or(0, |line| line.width() as u16);
+         let right = if full_width <= inset_footer_hint_area(area).width
+             && can_show_left_with_context(area, left_width, full_width)
+         {
+             full
+         } else {
+-            self.mode_indicator_line(/*show_cycle_hint*/ false)
++            self.mode_indicator_line(false)
+         };
++        if let Some(value) = status.as_mut() {
 +            let right_width = right.as_ref().map_or(0, |line| line.width() as u16);
 +            let available = max_left_width_for_right(area, right_width)
 +                .unwrap_or_else(|| inset_footer_hint_area(area).width);
@@ -897,19 +946,26 @@ index 14fe0a9dbc..90eecc1e03 100644
 +        compose_passive_footer_layout(status.as_ref(), width, right)
 +    }
 +
-     pub(super) fn hint_footer_props(&self, options: ComposerRenderOptions<'_>) -> FooterProps {
-         let mut props = self.footer_props();
-         if self.status_surface_height(options) > 0 {
-@@ -23,11 +56,15 @@ impl ChatComposer {
-         if area.is_empty() {
-             return;
-         }
--        let mut props = self.footer_props();
--        // Persistent context is independent of help, queue, search, and quit modes.
--        props.mode = FooterMode::ComposerHasDraft;
--        props.is_task_running = false;
--        let line = passive_footer_status_line(&props);
-+        let layout = self.persistent_status_layout(area.width);
++    pub(super) fn hint_footer_props(&self, options: ComposerRenderOptions<'_>) -> FooterProps {
++        let mut props = self.footer_props();
++        if self.status_surface_height(options) > 0 {
++            props.status_line_enabled = false;
++            props.status_line_value = None;
++            props.active_agent_label = None;
++        }
++        props
++    }
++
++    pub(super) fn render_status_surface(
++        &self,
++        area: Rect,
++        buf: &mut Buffer,
++        options: ComposerRenderOptions<'_>,
++    ) {
++        if area.is_empty() {
++            return;
++        }
++        let layout = self.persistent_status_layout(area.width, options);
 +        if !layout.is_single_status_row() {
 +            render_passive_footer(area, buf, &layout);
 +            if let Some(url) = self.footer.status_line_hyperlink_url.as_deref() {
@@ -918,11 +974,21 @@ index 14fe0a9dbc..90eecc1e03 100644
 +            return;
 +        }
 +        let line = layout.lines().first().cloned();
-         let right = self.mode_indicator_line(/*show_cycle_hint*/ false);
++        let right = layout.right_indicator();
          let right_width = right
              .as_ref()
+             .map_or(/*default*/ 0, |line| line.width() as u16);
+@@ -78,7 +123,7 @@ impl ChatComposer {
+             );
+         }
+         if let Some(right) = right {
+-            render_context_right(area, buf, &right);
++            render_context_right(area, buf, right);
+         }
+         if let Some(url) = self.footer.status_line_hyperlink_url.as_deref() {
+             mark_underlined_hyperlink(buf, area, url);
 diff --git a/codex-rs/tui/src/bottom_pane/chat_composer/status_surface_tests.rs b/codex-rs/tui/src/bottom_pane/chat_composer/status_surface_tests.rs
-index 4a7bc01f8a..f151a8fadb 100644
+index 369bca1..1407013 100644
 --- a/codex-rs/tui/src/bottom_pane/chat_composer/status_surface_tests.rs
 +++ b/codex-rs/tui/src/bottom_pane/chat_composer/status_surface_tests.rs
 @@ -14,7 +14,7 @@ fn composer() -> ChatComposer {
@@ -934,7 +1000,7 @@ index 4a7bc01f8a..f151a8fadb 100644
      composer
  }
  
-@@ -57,6 +57,23 @@ fn render_with_height(
+@@ -57,6 +57,46 @@ fn render_with_height(
      (text, composer.cursor_pos_with_options(area, options))
  }
  
@@ -953,6 +1019,29 @@ index 4a7bc01f8a..f151a8fadb 100644
 +    }
 +    assert!(cursor.is_some());
 +    insta::assert_snapshot!(text);
++}
++
++#[test]
++fn multiline_status_surface_chooses_cycle_hint_using_the_final_row() {
++    let mut composer = composer();
++    composer.set_collaboration_mode_indicator(Some(CollaborationModeIndicator::Plan));
++    let earlier_row = "branch name ".repeat(5);
++    composer.set_status_line(StatusLine::from_fixed_rows(vec![
++        Line::from(earlier_row.clone()),
++        Line::from("tokens"),
++    ]));
++    let (wide, _) = render(&composer, 64, None);
++    assert!(wide.contains(earlier_row.trim_end()), "{wide}");
++    assert!(
++        wide.lines()
++            .any(|row| row.contains("tokens") && row.contains("shift+tab to cycle")),
++        "{wide}"
++    );
++    let (narrow, _) = render(&composer, 32, None);
++    assert!(narrow.contains("tokens"), "{narrow}");
++    assert!(narrow.contains("Plan mode"), "{narrow}");
++    assert!(!narrow.contains("shift+tab"), "{narrow}");
++    insta::assert_snapshot!(format!("{wide}\n---\n{narrow}"));
 +}
 +
  #[test]
@@ -1159,7 +1248,7 @@ index aaae8c2d4f..9a04ffb184 100644
  fn ultra_accent_upgrades_prompt_glyph() {
      snapshot_composer_state_with_width(
 diff --git a/codex-rs/tui/src/bottom_pane/footer.rs b/codex-rs/tui/src/bottom_pane/footer.rs
-index b81f2c3151..923fdc523c 100644
+index b81f2c3..4320210 100644
 --- a/codex-rs/tui/src/bottom_pane/footer.rs
 +++ b/codex-rs/tui/src/bottom_pane/footer.rs
 @@ -45,6 +45,7 @@
@@ -1189,7 +1278,7 @@ index b81f2c3151..923fdc523c 100644
      pub(crate) active_agent_label: Option<String>,
  }
  
-@@ -275,6 +277,112 @@ pub(crate) fn render_footer_line(area: Rect, buf: &mut Buffer, line: Line<'stati
+@@ -275,6 +277,116 @@ pub(crate) fn render_footer_line(area: Rect, buf: &mut Buffer, line: Line<'stati
      .render(area, buf);
  }
  
@@ -1206,6 +1295,10 @@ index b81f2c3151..923fdc523c 100644
 +
 +    pub(crate) fn lines(&self) -> &[Line<'static>] {
 +        &self.lines
++    }
++
++    pub(crate) fn right_indicator(&self) -> Option<&Line<'static>> {
++        self.right_indicator.as_ref()
 +    }
 +
 +    pub(crate) fn is_single_status_row(&self) -> bool {
@@ -1302,7 +1395,7 @@ index b81f2c3151..923fdc523c 100644
  /// Render footer content directly from `FooterProps`.
  ///
  /// This is intentionally not part of the width-based collapse/fallback logic.
-@@ -688,16 +796,17 @@ fn right_aligned_x(area: Rect, content_width: u16) -> Option<u16> {
+@@ -688,16 +800,17 @@ fn right_aligned_x(area: Rect, content_width: u16) -> Option<u16> {
  
  pub(crate) fn max_left_width_for_right(area: Rect, right_width: u16) -> Option<u16> {
      let context_x = right_aligned_x(area, right_width)?;
@@ -1323,7 +1416,7 @@ index b81f2c3151..923fdc523c 100644
  }
  
  pub(crate) fn can_show_left_with_context(area: Rect, left_width: u16, context_width: u16) -> bool {
-@@ -707,7 +816,9 @@ pub(crate) fn can_show_left_with_context(area: Rect, left_width: u16, context_wi
+@@ -707,7 +820,9 @@ pub(crate) fn can_show_left_with_context(area: Rect, left_width: u16, context_wi
      if left_width == 0 {
          return true;
      }
@@ -1334,7 +1427,7 @@ index b81f2c3151..923fdc523c 100644
      left_extent <= context_x.saturating_sub(area.x)
  }
  
-@@ -770,10 +881,8 @@ fn footer_from_props_lines(
+@@ -770,10 +885,8 @@ fn footer_from_props_lines(
      show_queue_hint: bool,
  ) -> Vec<Line<'static>> {
      let key_hints = props.key_hints;
@@ -1347,7 +1440,7 @@ index b81f2c3151..923fdc523c 100644
      }
      match props.mode {
          FooterMode::QuitShortcutReminder => {
-@@ -819,43 +928,34 @@ fn footer_from_props_lines(
+@@ -819,43 +932,34 @@ fn footer_from_props_lines(
      }
  }
  
@@ -1403,7 +1496,7 @@ index b81f2c3151..923fdc523c 100644
  }
  
  /// Whether the current footer mode allows contextual information to replace instructional hints.
-@@ -972,7 +1072,6 @@ pub(crate) fn context_window_line(percent: Option<i64>, used_tokens: Option<i64>
+@@ -972,7 +1076,6 @@ pub(crate) fn context_window_line(percent: Option<i64>, used_tokens: Option<i64>
  #[cfg(test)]
  mod tests {
      use super::*;
@@ -1411,7 +1504,7 @@ index b81f2c3151..923fdc523c 100644
      use crate::test_backend::VT100Backend;
      use insta::assert_snapshot;
      use pretty_assertions::assert_eq;
-@@ -1038,6 +1137,71 @@ mod tests {
+@@ -1038,6 +1141,71 @@ mod tests {
          );
      }
  
@@ -1483,7 +1576,7 @@ index b81f2c3151..923fdc523c 100644
      fn draw_footer_frame<B: Backend>(
          terminal: &mut Terminal<B>,
          height: u16,
-@@ -1066,129 +1230,69 @@ mod tests {
+@@ -1066,129 +1234,69 @@ mod tests {
                      | FooterMode::ShortcutOverlay
                      | FooterMode::EscHint => false,
                  };
@@ -1658,7 +1751,7 @@ index b81f2c3151..923fdc523c 100644
                          show_cycle_hint,
                          show_shortcuts_hint,
                          show_queue_hint,
-@@ -1231,7 +1335,12 @@ mod tests {
+@@ -1231,7 +1339,12 @@ mod tests {
          collaboration_mode_indicator: Option<CollaborationModeIndicator>,
          context_line: Line<'static>,
      ) {
@@ -1672,7 +1765,7 @@ index b81f2c3151..923fdc523c 100644
          let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
          draw_footer_frame(
              &mut terminal,
-@@ -1250,7 +1359,12 @@ mod tests {
+@@ -1250,7 +1363,12 @@ mod tests {
          collaboration_mode_indicator: Option<CollaborationModeIndicator>,
          context_line: Line<'static>,
      ) -> String {
@@ -1686,7 +1779,7 @@ index b81f2c3151..923fdc523c 100644
          let mut terminal = Terminal::new(VT100Backend::new(width, height)).expect("terminal");
          draw_footer_frame(
              &mut terminal,
-@@ -1270,7 +1384,12 @@ mod tests {
+@@ -1270,7 +1388,12 @@ mod tests {
          collaboration_mode_indicator: Option<CollaborationModeIndicator>,
          ide_context_active: bool,
      ) {
@@ -1700,7 +1793,7 @@ index b81f2c3151..923fdc523c 100644
          let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
          draw_footer_frame(
              &mut terminal,
-@@ -1283,6 +1402,116 @@ mod tests {
+@@ -1283,6 +1406,116 @@ mod tests {
          assert_snapshot!(name, terminal.backend());
      }
  
@@ -1817,7 +1910,7 @@ index b81f2c3151..923fdc523c 100644
      #[test]
      fn footer_snapshots() {
          snapshot_footer(
-@@ -1536,7 +1765,9 @@ mod tests {
+@@ -1536,7 +1769,9 @@ mod tests {
              collaboration_modes_enabled: false,
              is_wsl: false,
              quit_shortcut_key: key_hint::ctrl(KeyCode::Char('c')),
@@ -1828,7 +1921,7 @@ index b81f2c3151..923fdc523c 100644
              status_line_enabled: true,
              key_hints: FooterKeyHints::default_bindings(),
              active_agent_label: None,
-@@ -1552,7 +1783,9 @@ mod tests {
+@@ -1552,7 +1787,9 @@ mod tests {
              collaboration_modes_enabled: false,
              is_wsl: false,
              quit_shortcut_key: key_hint::ctrl(KeyCode::Char('c')),
@@ -1839,7 +1932,7 @@ index b81f2c3151..923fdc523c 100644
              status_line_enabled: true,
              key_hints: FooterKeyHints::default_bindings(),
              active_agent_label: None,
-@@ -1568,7 +1801,9 @@ mod tests {
+@@ -1568,7 +1805,9 @@ mod tests {
              collaboration_modes_enabled: false,
              is_wsl: false,
              quit_shortcut_key: key_hint::ctrl(KeyCode::Char('c')),
@@ -1850,7 +1943,7 @@ index b81f2c3151..923fdc523c 100644
              status_line_enabled: true,
              key_hints: FooterKeyHints::default_bindings(),
              active_agent_label: None,
-@@ -1659,16 +1894,18 @@ mod tests {
+@@ -1659,16 +1898,18 @@ mod tests {
              collaboration_modes_enabled: true,
              is_wsl: false,
              quit_shortcut_key: key_hint::ctrl(KeyCode::Char('c')),
@@ -1873,7 +1966,7 @@ index b81f2c3151..923fdc523c 100644
              /*width*/ 40,
              &props,
              Some(CollaborationModeIndicator::Plan),
-@@ -1699,7 +1936,9 @@ mod tests {
+@@ -1699,7 +1940,9 @@ mod tests {
              collaboration_modes_enabled: false,
              is_wsl: false,
              quit_shortcut_key: key_hint::ctrl(KeyCode::Char('c')),
@@ -1884,7 +1977,7 @@ index b81f2c3151..923fdc523c 100644
              status_line_enabled: true,
              key_hints: FooterKeyHints::default_bindings(),
              active_agent_label: Some("Robie [explorer]".to_string()),
-@@ -1709,7 +1948,7 @@ mod tests {
+@@ -1709,7 +1952,7 @@ mod tests {
      }
  
      #[test]
@@ -1893,7 +1986,7 @@ index b81f2c3151..923fdc523c 100644
          let props = FooterProps {
              mode: FooterMode::ComposerEmpty,
              esc_backtrack_hint: false,
-@@ -1718,10 +1957,12 @@ mod tests {
+@@ -1718,10 +1961,12 @@ mod tests {
              collaboration_modes_enabled: true,
              is_wsl: false,
              quit_shortcut_key: key_hint::ctrl(KeyCode::Char('c')),
@@ -1910,7 +2003,7 @@ index b81f2c3151..923fdc523c 100644
              status_line_enabled: true,
              key_hints: FooterKeyHints::default_bindings(),
              active_agent_label: None,
-@@ -1739,12 +1980,20 @@ mod tests {
+@@ -1739,12 +1984,20 @@ mod tests {
              "mode indicator should remain visible"
          );
          assert!(
@@ -4029,4 +4122,44 @@ index 0000000000..b09753dfed
 +  branch row
 +  limits row
 +  tokens row
++  ? for shortcuts
+diff --git a/codex-rs/tui/src/bottom_pane/chat_composer/snapshots/codex_tui__bottom_pane__chat_composer__status_surface__tests__multiline_status_surface_chooses_cycle_hint_using_the_final_row.snap b/codex-rs/tui/src/bottom_pane/chat_composer/snapshots/codex_tui__bottom_pane__chat_composer__status_surface__tests__multiline_status_surface_chooses_cycle_hint_using_the_final_row.snap
+new file mode 100644
+index 0000000..5cb965d
+--- /dev/null
++++ b/codex-rs/tui/src/bottom_pane/chat_composer/snapshots/codex_tui__bottom_pane__chat_composer__status_surface__tests__multiline_status_surface_chooses_cycle_hint_using_the_final_row.snap
+@@ -0,0 +1,34 @@
++---
++source: tui/src/bottom_pane/chat_composer/status_surface_tests.rs
++expression: "format!(\"{wide}\\n---\\n{narrow}\")"
++---
++
++
++
++
++
++
++
++
++
++› Ask Codex
++
++  branch name branch name branch name branch name branch name
++  tokens                        Plan mode (shift+tab to cycle)
++  ? for shortcuts
++---
++
++
++
++
++
++
++
++
++
++› Ask Codex
++
++  branch name branch name branch
++   name branch name branch name
++  tokens             Plan mode
 +  ? for shortcuts
