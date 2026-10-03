@@ -851,7 +851,7 @@ index 5db883b7e6..33713e6095 100644
  }
  
 diff --git a/codex-rs/tui/src/bottom_pane/chat_composer/status_surface.rs b/codex-rs/tui/src/bottom_pane/chat_composer/status_surface.rs
-index 60ee2e0..6795e74 100644
+index 60ee2e0..bde8f04 100644
 --- a/codex-rs/tui/src/bottom_pane/chat_composer/status_surface.rs
 +++ b/codex-rs/tui/src/bottom_pane/chat_composer/status_surface.rs
 @@ -3,31 +3,29 @@
@@ -898,7 +898,7 @@ index 60ee2e0..6795e74 100644
          let mut props = self.footer_props();
          let show_cycle_hint = !props.is_task_running
              && !self.blocks_direct_input
-@@ -38,24 +36,65 @@ impl ChatComposer {
+@@ -38,24 +36,71 @@ impl ChatComposer {
                  FooterMode::ComposerEmpty | FooterMode::ComposerHasDraft
              )
              && options.footer.is_none_or(|footer| !footer.is_interactive);
@@ -909,12 +909,20 @@ index 60ee2e0..6795e74 100644
 +        let mut status = passive_footer_status(&props);
          let full = self.mode_indicator_line(show_cycle_hint);
 -        let left_width = line
+-            .as_ref()
+-            .map_or(/*default*/ 0, |line| line.width() as u16);
+-        let full_width = full
++        if status.as_ref().is_some_and(StatusLine::has_fixed_rows) {
++            return passive_footer_layout_with_indicator_fallback(
++                status.as_ref(),
++                width,
++                full,
++                self.mode_indicator_line(false),
++            );
++        }
 +        let area = Rect::new(0, 0, width, 1);
 +        let left_width = status
              .as_ref()
--            .map_or(/*default*/ 0, |line| line.width() as u16);
--        let full_width = full
--            .as_ref()
 -            .map_or(/*default*/ 0, |line| line.width() as u16);
 +            .map_or(0, |value| value.to_line().width() as u16);
 +        let full_width = full.as_ref().map_or(0, |line| line.width() as u16);
@@ -926,9 +934,7 @@ index 60ee2e0..6795e74 100644
 -            self.mode_indicator_line(/*show_cycle_hint*/ false)
 +            self.mode_indicator_line(false)
          };
-+        if let Some(value) = status.as_mut()
-+            && !value.has_fixed_rows()
-+        {
++        if let Some(value) = status.as_mut() {
 +            let right_width = right.as_ref().map_or(0, |line| line.width() as u16);
 +            let available = max_left_width_for_right(area, right_width)
 +                .unwrap_or_else(|| inset_footer_hint_area(area).width);
@@ -972,7 +978,7 @@ index 60ee2e0..6795e74 100644
          let right_width = right
              .as_ref()
              .map_or(/*default*/ 0, |line| line.width() as u16);
-@@ -78,7 +117,7 @@ impl ChatComposer {
+@@ -78,7 +123,7 @@ impl ChatComposer {
              );
          }
          if let Some(right) = right {
@@ -982,7 +988,7 @@ index 60ee2e0..6795e74 100644
          if let Some(url) = self.footer.status_line_hyperlink_url.as_deref() {
              mark_underlined_hyperlink(buf, area, url);
 diff --git a/codex-rs/tui/src/bottom_pane/chat_composer/status_surface_tests.rs b/codex-rs/tui/src/bottom_pane/chat_composer/status_surface_tests.rs
-index 4a7bc01f8a..f151a8fadb 100644
+index 369bca1..1407013 100644
 --- a/codex-rs/tui/src/bottom_pane/chat_composer/status_surface_tests.rs
 +++ b/codex-rs/tui/src/bottom_pane/chat_composer/status_surface_tests.rs
 @@ -14,7 +14,7 @@ fn composer() -> ChatComposer {
@@ -994,7 +1000,7 @@ index 4a7bc01f8a..f151a8fadb 100644
      composer
  }
  
-@@ -57,6 +57,23 @@ fn render_with_height(
+@@ -57,6 +57,46 @@ fn render_with_height(
      (text, composer.cursor_pos_with_options(area, options))
  }
  
@@ -1013,6 +1019,29 @@ index 4a7bc01f8a..f151a8fadb 100644
 +    }
 +    assert!(cursor.is_some());
 +    insta::assert_snapshot!(text);
++}
++
++#[test]
++fn multiline_status_surface_chooses_cycle_hint_using_the_final_row() {
++    let mut composer = composer();
++    composer.set_collaboration_mode_indicator(Some(CollaborationModeIndicator::Plan));
++    let earlier_row = "branch name ".repeat(5);
++    composer.set_status_line(StatusLine::from_fixed_rows(vec![
++        Line::from(earlier_row.clone()),
++        Line::from("tokens"),
++    ]));
++    let (wide, _) = render(&composer, 64, None);
++    assert!(wide.contains(earlier_row.trim_end()), "{wide}");
++    assert!(
++        wide.lines()
++            .any(|row| row.contains("tokens") && row.contains("shift+tab to cycle")),
++        "{wide}"
++    );
++    let (narrow, _) = render(&composer, 32, None);
++    assert!(narrow.contains("tokens"), "{narrow}");
++    assert!(narrow.contains("Plan mode"), "{narrow}");
++    assert!(!narrow.contains("shift+tab"), "{narrow}");
++    insta::assert_snapshot!(format!("{wide}\n---\n{narrow}"));
 +}
 +
  #[test]
@@ -4093,4 +4122,44 @@ index 0000000000..b09753dfed
 +  branch row
 +  limits row
 +  tokens row
++  ? for shortcuts
+diff --git a/codex-rs/tui/src/bottom_pane/chat_composer/snapshots/codex_tui__bottom_pane__chat_composer__status_surface__tests__multiline_status_surface_chooses_cycle_hint_using_the_final_row.snap b/codex-rs/tui/src/bottom_pane/chat_composer/snapshots/codex_tui__bottom_pane__chat_composer__status_surface__tests__multiline_status_surface_chooses_cycle_hint_using_the_final_row.snap
+new file mode 100644
+index 0000000..5cb965d
+--- /dev/null
++++ b/codex-rs/tui/src/bottom_pane/chat_composer/snapshots/codex_tui__bottom_pane__chat_composer__status_surface__tests__multiline_status_surface_chooses_cycle_hint_using_the_final_row.snap
+@@ -0,0 +1,34 @@
++---
++source: tui/src/bottom_pane/chat_composer/status_surface_tests.rs
++expression: "format!(\"{wide}\\n---\\n{narrow}\")"
++---
++
++
++
++
++
++
++
++
++
++› Ask Codex
++
++  branch name branch name branch name branch name branch name
++  tokens                        Plan mode (shift+tab to cycle)
++  ? for shortcuts
++---
++
++
++
++
++
++
++
++
++
++› Ask Codex
++
++  branch name branch name branch
++   name branch name branch name
++  tokens             Plan mode
 +  ? for shortcuts

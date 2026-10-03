@@ -154,7 +154,7 @@ cargo check -p codex-tui
 just test -p codex-tui
 ```
 
-For the 0.160.0 port, 1,165 TUI tests covering the release gate passed locally, including the
+For the 0.160.0 port, 1,166 TUI tests covering the release gate passed locally, including the
 command renderer, bottom pane, and multiline footer. Public builds use the focused gate defined in
 `scripts/build-native.sh`. The full upstream suite is outside this gate; its version-sensitive
 snapshots and terminal/editor tests need separate validation.
