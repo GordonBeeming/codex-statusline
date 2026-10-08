@@ -79,6 +79,12 @@ if [[ -n "$cwd" ]]; then
   repo_root=$(git -C "$cwd" rev-parse --show-toplevel 2>/dev/null || true)
   if [[ -n "$repo_root" ]]; then
     repo_name=$(basename "$repo_root")
+    # Git lists the main checkout first, even when linked worktrees live elsewhere.
+    main_root=$(git -C "$cwd" worktree list --porcelain -z 2>/dev/null \
+      | { IFS= read -r -d '' entry && printf '%s' "${entry#worktree }"; } || true)
+    if [[ -n "$main_root" && "$main_root" != "$repo_root" ]]; then
+      repo_name="$(basename "$main_root")/$repo_name"
+    fi
     branch=$(git -C "$cwd" branch --show-current 2>/dev/null || true)
     if [[ "$branch" == "gitbutler/workspace" ]] && command -v but >/dev/null 2>&1; then
       branches=$(cd "$cwd" && but branch list --no-check --no-ahead --json 2>/dev/null \
