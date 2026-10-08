@@ -46,7 +46,7 @@ assert_folder_label() {
 }
 
 # Reuse a local commit so fixture setup needs no new commits or signing credentials.
-git -C "$fixture_repo" fetch -q "$repo_root" HEAD
+git -C "$fixture_repo" fetch -q --update-shallow "$repo_root" HEAD
 internal_worktree="$fixture_repo/.codex/worktrees/cool possum"
 git -C "$fixture_repo" worktree add -q --detach "$internal_worktree" FETCH_HEAD
 mkdir -p "$internal_worktree/nested/folder"
