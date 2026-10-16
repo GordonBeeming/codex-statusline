@@ -271,7 +271,7 @@ index a20193149e57e60f75e89fbd4b4aa819d511b2e5..e91ac590c0515e738ceb3c659a08036b
      StatusLineSetup {
          items: Vec<StatusLineItem>,
 diff --git a/codex-rs/tui/src/bottom_pane/chat_composer.rs b/codex-rs/tui/src/bottom_pane/chat_composer.rs
-index 2ad3f1cd95ea3b5cb55326c2f56be31b76eeb761..8903748cf5db256ee98f79f2eb862b0125435b76 100644
+index 2ad3f1cd95ea3b5cb55326c2f56be31b76eeb761..72450dad6a2c33d7d7521362e5e7b062f8026433 100644
 --- a/codex-rs/tui/src/bottom_pane/chat_composer.rs
 +++ b/codex-rs/tui/src/bottom_pane/chat_composer.rs
 @@ -285,7 +285,6 @@ use crate::key_hint;
@@ -721,7 +721,7 @@ index 2ad3f1cd95ea3b5cb55326c2f56be31b76eeb761..8903748cf5db256ee98f79f2eb862b01
 +            footer_rows,
 +            vec![
 +                "  aaaaaa".to_string(),
-+                "  bb · cc Plan mode (⇧tab to cycle)".to_string(),
++                "  bb · cc  Plan mode (⇧tab to cycle)".to_string(),
 +            ]
 +        );
 +        insta::assert_snapshot!(
@@ -852,7 +852,7 @@ index 5db883b7e67104ffade76592d30efee8294d08f8..33713e609552d3df9cdc1518d4e12b47
  
 diff --git a/codex-rs/tui/src/bottom_pane/chat_composer/snapshots/codex_tui__bottom_pane__chat_composer__status_surface__tests__multiline_status_surface_chooses_cycle_hint_using_the_final_row.snap b/codex-rs/tui/src/bottom_pane/chat_composer/snapshots/codex_tui__bottom_pane__chat_composer__status_surface__tests__multiline_status_surface_chooses_cycle_hint_using_the_final_row.snap
 new file mode 100644
-index 0000000000000000000000000000000000000000..25e3e185b2f3c3cd9316ebcd43a1e2148047a7dc
+index 0000000000000000000000000000000000000000..2727b1f8c5eecaec3027d7b356da240a2ab01758
 --- /dev/null
 +++ b/codex-rs/tui/src/bottom_pane/chat_composer/snapshots/codex_tui__bottom_pane__chat_composer__status_surface__tests__multiline_status_surface_chooses_cycle_hint_using_the_final_row.snap
 @@ -0,0 +1,34 @@
@@ -872,7 +872,7 @@ index 0000000000000000000000000000000000000000..25e3e185b2f3c3cd9316ebcd43a1e214
 +› Ask Codex
 +
 +  branch name branch name branch name branch name branch name
-+  tokens                            Plan mode (⇧tab to cycle)
++  tokens                             Plan mode (⇧tab to cycle)
 +  ? for shortcuts
 +---
 +
@@ -2127,7 +2127,7 @@ index ae9405e9ff3718aa8d3c6c3dfac487a3c2688823..058101cff4fe34f95876b0857993ccf5
          }
 diff --git a/codex-rs/tui/src/bottom_pane/snapshots/codex_tui__bottom_pane__chat_composer__tests__full_cycle_indicator_shares_after_whole_field_reflow.snap b/codex-rs/tui/src/bottom_pane/snapshots/codex_tui__bottom_pane__chat_composer__tests__full_cycle_indicator_shares_after_whole_field_reflow.snap
 new file mode 100644
-index 0000000000000000000000000000000000000000..47714d8f9ef2d01d3d8f762398df0487f58c6289
+index 0000000000000000000000000000000000000000..7446f2ce87993d68d48507202514750f4ee34ed4
 --- /dev/null
 +++ b/codex-rs/tui/src/bottom_pane/snapshots/codex_tui__bottom_pane__chat_composer__tests__full_cycle_indicator_shares_after_whole_field_reflow.snap
 @@ -0,0 +1,9 @@
@@ -2139,7 +2139,7 @@ index 0000000000000000000000000000000000000000..47714d8f9ef2d01d3d8f762398df0487
 +"› Ask Codex to do anything            "
 +"                                      "
 +"  aaaaaa                              "
-+"  bb · cc Plan mode (⇧tab to cycle)  "
++"  bb · cc  Plan mode (⇧tab to cycle)  "
 diff --git a/codex-rs/tui/src/bottom_pane/snapshots/codex_tui__bottom_pane__chat_composer__tests__multiline_status_footer_reserves_every_row.snap b/codex-rs/tui/src/bottom_pane/snapshots/codex_tui__bottom_pane__chat_composer__tests__multiline_status_footer_reserves_every_row.snap
 new file mode 100644
 index 0000000000000000000000000000000000000000..1f9fd87c55ab6175096d20d601d333cd6efa997c
@@ -2703,7 +2703,7 @@ index 9567424fbb9b79eba31388a1e1449c500d36fb59..4fce5cede4b911dec33f2a7a2ecaa91d
 -    }
  }
 diff --git a/codex-rs/tui/src/bottom_pane/status_line_style.rs b/codex-rs/tui/src/bottom_pane/status_line_style.rs
-index 6ef9003c5887ed3cf8f614d3079f95fa96e61ae8..423a2902f1b70960fedaf0efe27f923c4e71009c 100644
+index 6ef9003c5887ed3cf8f614d3079f95fa96e61ae8..857ea87275eb1735f26dcd7c010b4b16eea7c5ef 100644
 --- a/codex-rs/tui/src/bottom_pane/status_line_style.rs
 +++ b/codex-rs/tui/src/bottom_pane/status_line_style.rs
 @@ -2,10 +2,10 @@
@@ -2899,6 +2899,16 @@ index 6ef9003c5887ed3cf8f614d3079f95fa96e61ae8..423a2902f1b70960fedaf0efe27f923c
              insta::assert_snapshot!(format!("{buffer:?}"));
          });
      }
+@@ -444,7 +457,8 @@ mod tests {
+             /*use_theme_colors*/ true,
+             /*thread_id*/ None,
+         )
+-        .expect("status line");
++        .expect("status line")
++        .to_line();
+         if level == "0" {
+             assert_eq!(
+                 line.spans
 diff --git a/codex-rs/tui/src/bottom_pane/status_line_tests.rs b/codex-rs/tui/src/bottom_pane/status_line_tests.rs
 new file mode 100644
 index 0000000000000000000000000000000000000000..04fcff807fc7a0fa791a96ae1d1ebaecbed5ac97
