@@ -4,6 +4,8 @@ set -euo pipefail
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 test_home=$(mktemp -d)
 trap 'rm -rf "$test_home"' EXIT
+# Keep an inherited CODEX_HOME from redirecting tests to the real user config.
+export CODEX_HOME="$test_home/.codex"
 
 mkdir -p "$test_home/.codex"
 printf '[tui]\nstatus_line = ["model"]\n' > "$test_home/.codex/config.toml"

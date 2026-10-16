@@ -1,8 +1,8 @@
 diff --git a/codex-rs/config/src/loader/mod.rs b/codex-rs/config/src/loader/mod.rs
-index 615d394a89..f5f42acbe7 100644
+index 46dbb8b055768542c4d0360059823411cdc66023..4fa22bfa35caf587134e25b3d906d71a93e57479 100644
 --- a/codex-rs/config/src/loader/mod.rs
 +++ b/codex-rs/config/src/loader/mod.rs
-@@ -1184,6 +1184,11 @@ fn sanitize_project_config(
+@@ -1222,6 +1222,11 @@ fn sanitize_project_config(
              }
          }
      }
@@ -15,10 +15,10 @@ index 615d394a89..f5f42acbe7 100644
          && let Some(policy) = table
              .get_mut("shell_environment_policy")
 diff --git a/codex-rs/config/src/types.rs b/codex-rs/config/src/types.rs
-index e44f737c18..c11e8fd6ed 100644
+index 2dbdfe2cc82f6e44c686801eb2bf1b56690c334a..66d02e59b122b51f0dfdbb5ed134268d31b47295 100644
 --- a/codex-rs/config/src/types.rs
 +++ b/codex-rs/config/src/types.rs
-@@ -797,6 +797,38 @@ pub struct ModelAvailabilityNuxConfig {
+@@ -822,6 +822,38 @@ pub struct ModelAvailabilityNuxConfig {
  /// Fallback resize-reflow row cap when Codex cannot identify a terminal-specific scrollback size.
  pub const DEFAULT_TERMINAL_RESIZE_REFLOW_FALLBACK_MAX_ROWS: usize = 1_000;
  
@@ -57,7 +57,7 @@ index e44f737c18..c11e8fd6ed 100644
  /// Collection of settings that are specific to the TUI.
  #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default, JsonSchema)]
  #[schemars(deny_unknown_fields)]
-@@ -888,6 +920,13 @@ pub struct Tui {
+@@ -924,6 +956,13 @@ pub struct Tui {
      #[serde(default)]
      pub status_line: Option<Vec<String>>,
  
@@ -72,10 +72,10 @@ index e44f737c18..c11e8fd6ed 100644
      /// Defaults to `true`.
      #[serde(default = "default_true")]
 diff --git a/codex-rs/core/config.schema.json b/codex-rs/core/config.schema.json
-index af8f05ee51..3084d0664b 100644
+index 4aba1bab6cd2cbcc179a5de802731f2775c6bc88..413de4afc30d33f13a7f11068c6e9c64d74e9695 100644
 --- a/codex-rs/core/config.schema.json
 +++ b/codex-rs/core/config.schema.json
-@@ -4726,6 +4726,15 @@
+@@ -5033,6 +5033,15 @@
            },
            "type": "array"
          },
@@ -91,7 +91,7 @@ index af8f05ee51..3084d0664b 100644
          "status_line_use_colors": {
            "default": true,
            "description": "Color status line items with colors derived from the active syntax theme. Defaults to `true`.",
-@@ -5846,6 +5855,44 @@
+@@ -6180,6 +6189,44 @@
        },
        "type": "object"
      },
@@ -137,7 +137,7 @@ index af8f05ee51..3084d0664b 100644
        "additionalProperties": false,
        "description": "Vim normal-mode keybindings for modal editing inside text areas.\n\nActions that use uppercase letters (like `A` for append-line-end) should be specified as `shift-a` in config; the runtime matcher handles cross-terminal shift-reporting differences automatically.",
 diff --git a/codex-rs/core/src/config/mod.rs b/codex-rs/core/src/config/mod.rs
-index 571fc2d81b..f0d217b50a 100644
+index c5ab36546e189781c8b1f957cf56d8d31ad3d7fe..c61f27daa32494c224a291e730a6d16202712fcb 100644
 --- a/codex-rs/core/src/config/mod.rs
 +++ b/codex-rs/core/src/config/mod.rs
 @@ -56,6 +56,7 @@ use codex_config::types::ToolSuggestDiscoverable;
@@ -148,7 +148,7 @@ index 571fc2d81b..f0d217b50a 100644
  use codex_config::types::UriBasedFileOpener;
  use codex_config::types::WindowsSandboxModeToml;
  use codex_core_plugins::PluginLoadOutcome;
-@@ -810,6 +811,9 @@ pub struct Config {
+@@ -851,6 +852,9 @@ pub struct Config {
      /// When unset, the TUI defaults to: `model-with-reasoning` and `current-dir`.
      pub tui_status_line: Option<Vec<String>>,
  
@@ -158,7 +158,7 @@ index 571fc2d81b..f0d217b50a 100644
      /// Whether to color status line items with colors from the active syntax theme.
      pub tui_status_line_use_colors: bool,
  
-@@ -4517,6 +4521,10 @@ impl Config {
+@@ -4679,6 +4683,10 @@ impl Config {
                  .map(|t| t.alternate_screen)
                  .unwrap_or_default(),
              tui_status_line: cfg.tui.as_ref().and_then(|t| t.status_line.clone()),
@@ -170,10 +170,10 @@ index 571fc2d81b..f0d217b50a 100644
                  .tui
                  .as_ref()
 diff --git a/codex-rs/tui/src/app/background_requests.rs b/codex-rs/tui/src/app/background_requests.rs
-index 8b29753b3c..47401f5d2d 100644
+index 69f2aeb458f2c8860898802a326cf2d2a5c752be..5bb4ec54e40d265182dae1bf1ec1173fc55e412d 100644
 --- a/codex-rs/tui/src/app/background_requests.rs
 +++ b/codex-rs/tui/src/app/background_requests.rs
-@@ -201,6 +201,23 @@ impl App {
+@@ -229,6 +229,23 @@ impl App {
          });
      }
  
@@ -198,10 +198,10 @@ index 8b29753b3c..47401f5d2d 100644
          &mut self,
          app_server: &AppServerSession,
 diff --git a/codex-rs/tui/src/app/event_dispatch.rs b/codex-rs/tui/src/app/event_dispatch.rs
-index ae51fc91be..8a1d7dabcf 100644
+index a7f7f1e827818386b7417f27ab9a829f34fe1fa7..7ef2a5d5802ceb2e805b8e60b9e02dc40e7296e2 100644
 --- a/codex-rs/tui/src/app/event_dispatch.rs
 +++ b/codex-rs/tui/src/app/event_dispatch.rs
-@@ -1616,6 +1616,14 @@ impl App {
+@@ -1790,6 +1790,14 @@ impl App {
              AppEvent::RefreshStatusLineWorkspaceHeadline { request_id } => {
                  self.refresh_status_line_workspace_headline(app_server, request_id);
              }
@@ -216,7 +216,7 @@ index ae51fc91be..8a1d7dabcf 100644
              AppEvent::OpenThreadGoalMenu { thread_id } => {
                  self.open_thread_goal_menu(app_server, thread_id).await;
              }
-@@ -3033,6 +3041,14 @@ impl App {
+@@ -3290,6 +3298,14 @@ impl App {
                      tui.frame_requester().schedule_frame();
                  }
              }
@@ -230,12 +230,12 @@ index ae51fc91be..8a1d7dabcf 100644
 +            }
              AppEvent::StatusLineSetupCancelled => {
                  self.chat_widget.cancel_status_line_setup();
-             }
+                 self.chat_widget.refresh_config_panel(/*notice*/ None);
 diff --git a/codex-rs/tui/src/app_event.rs b/codex-rs/tui/src/app_event.rs
-index 0d160fd8f5..7200d20074 100644
+index a20193149e57e60f75e89fbd4b4aa819d511b2e5..e91ac590c0515e738ceb3c659a08036bd6b6a062 100644
 --- a/codex-rs/tui/src/app_event.rs
 +++ b/codex-rs/tui/src/app_event.rs
-@@ -59,6 +59,7 @@ use crate::experimental_features::FeatureWriteResult;
+@@ -62,6 +62,7 @@ use crate::experimental_features::FeatureWriteResult;
  use crate::goal_files::GoalDraft;
  use codex_app_server_protocol::AskForApproval;
  use codex_config::types::ApprovalsReviewer;
@@ -243,7 +243,7 @@ index 0d160fd8f5..7200d20074 100644
  use codex_features::Feature;
  use codex_plugin::PluginCapabilitySummary;
  use codex_protocol::config_types::CollaborationModeMask;
-@@ -767,6 +768,14 @@ pub(crate) enum AppEvent {
+@@ -823,6 +824,14 @@ pub(crate) enum AppEvent {
          request_id: u64,
      },
  
@@ -258,7 +258,7 @@ index 0d160fd8f5..7200d20074 100644
      /// Commit settled asynchronous usage output after active-output barriers clear.
      CommitPendingUsageOutput,
  
-@@ -1510,6 +1519,11 @@ pub(crate) enum AppEvent {
+@@ -1609,6 +1618,11 @@ pub(crate) enum AppEvent {
          request_id: u64,
          result: Result<crate::workspace_messages::WorkspaceHeadlineFetchResult, String>,
      },
@@ -271,10 +271,10 @@ index 0d160fd8f5..7200d20074 100644
      StatusLineSetup {
          items: Vec<StatusLineItem>,
 diff --git a/codex-rs/tui/src/bottom_pane/chat_composer.rs b/codex-rs/tui/src/bottom_pane/chat_composer.rs
-index 625c614920..d6bf01d373 100644
+index 2ad3f1cd95ea3b5cb55326c2f56be31b76eeb761..8903748cf5db256ee98f79f2eb862b0125435b76 100644
 --- a/codex-rs/tui/src/bottom_pane/chat_composer.rs
 +++ b/codex-rs/tui/src/bottom_pane/chat_composer.rs
-@@ -282,7 +282,6 @@ use crate::key_hint;
+@@ -285,7 +285,6 @@ use crate::key_hint;
  use crate::key_hint::KeyBinding;
  use crate::key_hint::ShortcutHint;
  use crate::key_hint::has_ctrl_or_alt;
@@ -282,7 +282,7 @@ index 625c614920..d6bf01d373 100644
  use crate::ui_consts::FOOTER_INDENT_COLS;
  use codex_message_history::HistoryBatchCursor;
  use crossterm::event::KeyCode;
-@@ -324,6 +323,7 @@ use super::footer::FooterKeyHints;
+@@ -326,6 +325,7 @@ use super::footer::CollaborationModeIndicator;
  use super::footer::FooterMode;
  use super::footer::FooterProps;
  use super::footer::GoalStatusIndicator;
@@ -290,7 +290,7 @@ index 625c614920..d6bf01d373 100644
  use super::footer::SummaryLeft;
  use super::footer::can_show_left_with_context;
  use super::footer::context_window_line;
-@@ -333,11 +333,14 @@ use super::footer::footer_hint_items_width;
+@@ -335,11 +335,14 @@ use super::footer::footer_hint_items_width;
  use super::footer::footer_line_width;
  use super::footer::inset_footer_hint_area;
  use super::footer::max_left_width_for_right;
@@ -306,7 +306,7 @@ index 625c614920..d6bf01d373 100644
  use super::footer::reset_mode_after_activity;
  use super::footer::side_conversation_context_line;
  use super::footer::single_line_footer_layout;
-@@ -414,6 +417,7 @@ use crate::app_event::ConnectorsSnapshot;
+@@ -417,6 +420,7 @@ use crate::app_event::ConnectorsSnapshot;
  use crate::app_event_sender::AppEventSender;
  use crate::bottom_pane::LocalImageAttachment;
  use crate::bottom_pane::MentionBinding;
@@ -314,7 +314,7 @@ index 625c614920..d6bf01d373 100644
  use crate::bottom_pane::textarea::KillBufferSnapshot;
  use crate::bottom_pane::textarea::TextArea;
  use crate::clipboard_paste::normalize_pasted_path;
-@@ -862,10 +866,10 @@ impl ChatComposer {
+@@ -867,10 +871,10 @@ impl ChatComposer {
              self.effort_ignition = Some(EffortIgnition::new(tier, style));
              self.effort_animation_style = Some(style);
              if self.footer.status_line_enabled
@@ -327,7 +327,7 @@ index 625c614920..d6bf01d373 100644
              }
              if let Some(frame_requester) = &self.frame_requester {
                  frame_requester.schedule_frame();
-@@ -1427,6 +1431,38 @@ impl ChatComposer {
+@@ -1433,6 +1437,38 @@ impl ChatComposer {
          }
      }
  
@@ -366,7 +366,7 @@ index 625c614920..d6bf01d373 100644
      fn right_footer_line_with_context(&self) -> Line<'static> {
          let mut line = if self.footer.context_window_pending {
              Line::default()
-@@ -4402,7 +4438,7 @@ impl ChatComposer {
+@@ -4288,7 +4324,7 @@ impl ChatComposer {
          }
      }
  
@@ -375,7 +375,7 @@ index 625c614920..d6bf01d373 100644
          if self.footer.status_line_value == status_line {
              return false;
          }
-@@ -4708,39 +4744,48 @@ impl ChatComposer {
+@@ -4594,39 +4630,48 @@ impl ChatComposer {
                  } else if let Some(line) = self.history_search_footer_line() {
                      render_footer_line(hint_rect, buf, line);
                  } else {
@@ -441,7 +441,7 @@ index 625c614920..d6bf01d373 100644
                      };
                      let left_mode_indicator =
                          if status_line_active || self.status_surface_height(options) > 0 {
-@@ -4749,7 +4794,7 @@ impl ChatComposer {
+@@ -4635,7 +4680,7 @@ impl ChatComposer {
                              self.footer.collaboration_mode_indicator
                          };
                      let active_footer_hint_override = self.footer.hint_override.as_ref();
@@ -450,7 +450,7 @@ index 625c614920..d6bf01d373 100644
                          self.footer
                              .flash
                              .as_ref()
-@@ -4758,9 +4803,11 @@ impl ChatComposer {
+@@ -4644,9 +4689,11 @@ impl ChatComposer {
                      } else if let Some(items) = active_footer_hint_override {
                          footer_hint_items_width(items)
                      } else if status_line_active {
@@ -464,7 +464,7 @@ index 625c614920..d6bf01d373 100644
                              .unwrap_or(0)
                      } else {
                          footer_line_width(
-@@ -4771,40 +4818,30 @@ impl ChatComposer {
+@@ -4657,40 +4704,30 @@ impl ChatComposer {
                              show_queue_hint,
                          )
                      };
@@ -525,7 +525,7 @@ index 625c614920..d6bf01d373 100644
                      let single_line_layout = if has_override || status_line_active {
                          None
                      } else {
-@@ -4848,31 +4885,15 @@ impl ChatComposer {
+@@ -4734,31 +4771,15 @@ impl ChatComposer {
                      if let Some((summary_left, _)) = single_line_layout {
                          match summary_left {
                              SummaryLeft::Default => {
@@ -566,7 +566,7 @@ index 625c614920..d6bf01d373 100644
                              }
                              SummaryLeft::Custom(line) => {
                                  render_footer_line(hint_rect, buf, line);
-@@ -4886,8 +4907,8 @@ impl ChatComposer {
+@@ -4772,8 +4793,8 @@ impl ChatComposer {
                      } else if let Some(items) = active_footer_hint_override {
                          render_footer_hint_items(hint_rect, buf, items);
                      } else if status_line_active {
@@ -577,7 +577,7 @@ index 625c614920..d6bf01d373 100644
                          }
                      } else {
                          render_footer_from_props(
-@@ -5445,9 +5466,11 @@ mod tests {
+@@ -5367,9 +5388,11 @@ mod tests {
              /*enhanced_keys_supported*/ true,
              |composer| {
                  composer.set_status_line_enabled(/*enabled*/ true);
@@ -592,7 +592,7 @@ index 625c614920..d6bf01d373 100644
                  composer.set_text_content("!git status".to_string(), Vec::new(), Vec::new());
              },
          );
-@@ -5457,9 +5480,11 @@ mod tests {
+@@ -5379,9 +5402,11 @@ mod tests {
              /*enhanced_keys_supported*/ true,
              |composer| {
                  composer.set_status_line_enabled(/*enabled*/ true);
@@ -607,7 +607,7 @@ index 625c614920..d6bf01d373 100644
                  composer.set_text_content("!".to_string(), Vec::new(), Vec::new());
                  let _ = composer.handle_key_event(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
              },
-@@ -5500,9 +5525,11 @@ mod tests {
+@@ -5422,9 +5447,11 @@ mod tests {
              /*disable_paste_burst*/ false,
          );
          composer.set_status_line_enabled(/*enabled*/ true);
@@ -622,7 +622,7 @@ index 625c614920..d6bf01d373 100644
          composer.set_text_content("!git status".to_string(), Vec::new(), Vec::new());
  
          let area = Rect::new(0, 0, 100, 9);
-@@ -5675,24 +5702,101 @@ mod tests {
+@@ -5597,24 +5624,101 @@ mod tests {
          );
          let url = "https://github.com/openai/codex/pull/20252";
          composer.set_status_line_enabled(/*enabled*/ true);
@@ -701,7 +701,7 @@ index 625c614920..d6bf01d373 100644
 +            Line::from("cc"),
 +        ]));
 +
-+        let width = 42;
++        let width = 38;
 +        let height = composer.desired_height(width);
 +        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
 +        terminal
@@ -721,7 +721,7 @@ index 625c614920..d6bf01d373 100644
 +            footer_rows,
 +            vec![
 +                "  aaaaaa".to_string(),
-+                "  bb · cc Plan mode (shift+tab to cycle)".to_string(),
++                "  bb · cc Plan mode (⇧tab to cycle)".to_string(),
 +            ]
 +        );
 +        insta::assert_snapshot!(
@@ -732,7 +732,7 @@ index 625c614920..d6bf01d373 100644
  
      #[test]
 diff --git a/codex-rs/tui/src/bottom_pane/chat_composer/agents_navigation_tests.rs b/codex-rs/tui/src/bottom_pane/chat_composer/agents_navigation_tests.rs
-index b96020995a..5b0f3a88b9 100644
+index b96020995acbaee5f947f0655900f3647f6ac1d1..5b0f3a88b92570aba257906b745e3d22a7cd4e2d 100644
 --- a/codex-rs/tui/src/bottom_pane/chat_composer/agents_navigation_tests.rs
 +++ b/codex-rs/tui/src/bottom_pane/chat_composer/agents_navigation_tests.rs
 @@ -106,7 +106,9 @@ fn agents_navigation_hint_snapshots() {
@@ -747,7 +747,7 @@ index b96020995a..5b0f3a88b9 100644
                      _ => {}
                  }
 diff --git a/codex-rs/tui/src/bottom_pane/chat_composer/composer_layout.rs b/codex-rs/tui/src/bottom_pane/chat_composer/composer_layout.rs
-index b79c28b98a..6e92679693 100644
+index 949edcf91699d64956826211c335f9ef84854005..29dd644053f567a1116d894917b542f1edc5de91 100644
 --- a/codex-rs/tui/src/bottom_pane/chat_composer/composer_layout.rs
 +++ b/codex-rs/tui/src/bottom_pane/chat_composer/composer_layout.rs
 @@ -43,10 +43,12 @@ impl ChatComposer {
@@ -777,18 +777,18 @@ index b79c28b98a..6e92679693 100644
                  footer_height(&self.hint_footer_props(options), width)
              } else {
 diff --git a/codex-rs/tui/src/bottom_pane/chat_composer/footer_state.rs b/codex-rs/tui/src/bottom_pane/chat_composer/footer_state.rs
-index 1a22fd5ed2..94770ab967 100644
+index bcc92a3ed5762c077dd15fc3ef5aafab655975b5..b5b7f6af21b4adb9a4b42e2b7e46135d4943ffa7 100644
 --- a/codex-rs/tui/src/bottom_pane/chat_composer/footer_state.rs
 +++ b/codex-rs/tui/src/bottom_pane/chat_composer/footer_state.rs
-@@ -16,6 +16,7 @@ use std::time::Instant;
- 
+@@ -17,6 +17,7 @@ use std::time::Instant;
  use super::super::footer::footer_height;
+ use super::super::footer::reset_mode_after_activity;
  use super::super::footer::shows_passive_footer_line;
 +use super::super::footer::uses_passive_footer_status_layout;
  use super::ActivePopup;
- use ratatui::buffer::Buffer;
- use ratatui::layout::Rect;
-@@ -25,6 +26,7 @@ use ratatui::text::Text;
+ use crate::bottom_pane::footer::FooterKeyHints;
+ use crate::bottom_pane::footer::FooterProps;
+@@ -30,6 +31,7 @@ use ratatui::text::Text;
  use ratatui::widgets::Paragraph;
  use ratatui::widgets::Widget;
  
@@ -796,7 +796,7 @@ index 1a22fd5ed2..94770ab967 100644
  use crate::bottom_pane::footer::CollaborationModeIndicator;
  use crate::bottom_pane::footer::FooterMode;
  use crate::bottom_pane::footer::GoalStatusIndicator;
-@@ -140,8 +142,15 @@ impl super::ChatComposer {
+@@ -283,8 +285,15 @@ impl super::ChatComposer {
              .footer
              .map_or_else(
                  || {
@@ -814,7 +814,7 @@ index 1a22fd5ed2..94770ab967 100644
                  },
                  |footer| footer.text.height().try_into().unwrap_or(u16::MAX),
              )
-@@ -215,7 +224,7 @@ pub(super) struct FooterState {
+@@ -358,7 +367,7 @@ pub(super) struct FooterState {
      pub(super) collaboration_mode_indicator: Option<CollaborationModeIndicator>,
      pub(super) goal_status_indicator: Option<GoalStatusIndicator>,
      pub(super) ide_context_active: bool,
@@ -823,7 +823,7 @@ index 1a22fd5ed2..94770ab967 100644
      pub(super) status_line_hyperlink_url: Option<String>,
      pub(super) status_line_enabled: bool,
      pub(super) side_conversation_context_label: Option<String>,
-@@ -257,12 +266,7 @@ impl FooterState {
+@@ -401,12 +410,7 @@ impl FooterState {
  
      #[cfg(test)]
      pub(super) fn status_line_text(&self) -> Option<String> {
@@ -838,7 +838,7 @@ index 1a22fd5ed2..94770ab967 100644
  }
  
 diff --git a/codex-rs/tui/src/bottom_pane/chat_composer/footer_state_tests.rs b/codex-rs/tui/src/bottom_pane/chat_composer/footer_state_tests.rs
-index 5db883b7e6..33713e6095 100644
+index 5db883b7e67104ffade76592d30efee8294d08f8..33713e609552d3df9cdc1518d4e12b47031e654b 100644
 --- a/codex-rs/tui/src/bottom_pane/chat_composer/footer_state_tests.rs
 +++ b/codex-rs/tui/src/bottom_pane/chat_composer/footer_state_tests.rs
 @@ -18,7 +18,7 @@ fn composer() -> ChatComposer {
@@ -850,8 +850,74 @@ index 5db883b7e6..33713e6095 100644
      composer
  }
  
+diff --git a/codex-rs/tui/src/bottom_pane/chat_composer/snapshots/codex_tui__bottom_pane__chat_composer__status_surface__tests__multiline_status_surface_chooses_cycle_hint_using_the_final_row.snap b/codex-rs/tui/src/bottom_pane/chat_composer/snapshots/codex_tui__bottom_pane__chat_composer__status_surface__tests__multiline_status_surface_chooses_cycle_hint_using_the_final_row.snap
+new file mode 100644
+index 0000000000000000000000000000000000000000..25e3e185b2f3c3cd9316ebcd43a1e2148047a7dc
+--- /dev/null
++++ b/codex-rs/tui/src/bottom_pane/chat_composer/snapshots/codex_tui__bottom_pane__chat_composer__status_surface__tests__multiline_status_surface_chooses_cycle_hint_using_the_final_row.snap
+@@ -0,0 +1,34 @@
++---
++source: tui/src/bottom_pane/chat_composer/status_surface_tests.rs
++expression: "format!(\"{wide}\\n---\\n{narrow}\")"
++---
++
++
++
++
++
++
++
++
++
++› Ask Codex
++
++  branch name branch name branch name branch name branch name
++  tokens                            Plan mode (⇧tab to cycle)
++  ? for shortcuts
++---
++
++
++
++
++
++
++
++
++
++› Ask Codex
++
++  branch name branch name branch
++   name branch name branch name
++  tokens             Plan mode
++  ? for shortcuts
+diff --git a/codex-rs/tui/src/bottom_pane/chat_composer/snapshots/codex_tui__bottom_pane__chat_composer__status_surface__tests__multiline_status_surface_preserves_every_command_row.snap b/codex-rs/tui/src/bottom_pane/chat_composer/snapshots/codex_tui__bottom_pane__chat_composer__status_surface__tests__multiline_status_surface_preserves_every_command_row.snap
+new file mode 100644
+index 0000000000000000000000000000000000000000..b09753dfedc00cd68ab1891ba207b8291c806fb1
+--- /dev/null
++++ b/codex-rs/tui/src/bottom_pane/chat_composer/snapshots/codex_tui__bottom_pane__chat_composer__status_surface__tests__multiline_status_surface_preserves_every_command_row.snap
+@@ -0,0 +1,20 @@
++---
++source: tui/src/bottom_pane/chat_composer/status_surface_tests.rs
++expression: text
++---
++
++
++
++
++
++
++
++
++
++› Ask Codex
++
++  model row
++  branch row
++  limits row
++  tokens row
++  ? for shortcuts
 diff --git a/codex-rs/tui/src/bottom_pane/chat_composer/status_surface.rs b/codex-rs/tui/src/bottom_pane/chat_composer/status_surface.rs
-index 60ee2e0..bde8f04 100644
+index 60ee2e0fa9cf2662796eb50c1887bb3f11ee8f18..bde8f04c6116316ae78916de630313db2e03694c 100644
 --- a/codex-rs/tui/src/bottom_pane/chat_composer/status_surface.rs
 +++ b/codex-rs/tui/src/bottom_pane/chat_composer/status_surface.rs
 @@ -3,31 +3,29 @@
@@ -988,7 +1054,7 @@ index 60ee2e0..bde8f04 100644
          if let Some(url) = self.footer.status_line_hyperlink_url.as_deref() {
              mark_underlined_hyperlink(buf, area, url);
 diff --git a/codex-rs/tui/src/bottom_pane/chat_composer/status_surface_tests.rs b/codex-rs/tui/src/bottom_pane/chat_composer/status_surface_tests.rs
-index 369bca1..1407013 100644
+index 03e761f4f022a9e968489b2530945fc313b870ba..04384e9008c11d5580f937f0557f75d31955d878 100644
 --- a/codex-rs/tui/src/bottom_pane/chat_composer/status_surface_tests.rs
 +++ b/codex-rs/tui/src/bottom_pane/chat_composer/status_surface_tests.rs
 @@ -14,7 +14,7 @@ fn composer() -> ChatComposer {
@@ -1034,13 +1100,13 @@ index 369bca1..1407013 100644
 +    assert!(wide.contains(earlier_row.trim_end()), "{wide}");
 +    assert!(
 +        wide.lines()
-+            .any(|row| row.contains("tokens") && row.contains("shift+tab to cycle")),
++            .any(|row| row.contains("tokens") && row.contains("⇧tab to cycle")),
 +        "{wide}"
 +    );
 +    let (narrow, _) = render(&composer, 32, None);
 +    assert!(narrow.contains("tokens"), "{narrow}");
 +    assert!(narrow.contains("Plan mode"), "{narrow}");
-+    assert!(!narrow.contains("shift+tab"), "{narrow}");
++    assert!(!narrow.contains("⇧tab"), "{narrow}");
 +    insta::assert_snapshot!(format!("{wide}\n---\n{narrow}"));
 +}
 +
@@ -1048,7 +1114,7 @@ index 369bca1..1407013 100644
  fn passive_activity_keeps_shortcuts_only_when_the_complete_hint_fits() {
      let mut composer = composer();
 diff --git a/codex-rs/tui/src/bottom_pane/chat_composer/warning_notice.rs b/codex-rs/tui/src/bottom_pane/chat_composer/warning_notice.rs
-index 84de74e38e..f131f6e08e 100644
+index 84de74e38e690c0560bcb6731a0ae3b9925c3d01..f131f6e08e45c5dd5b00a3f95746fa4d8cead448 100644
 --- a/codex-rs/tui/src/bottom_pane/chat_composer/warning_notice.rs
 +++ b/codex-rs/tui/src/bottom_pane/chat_composer/warning_notice.rs
 @@ -3,6 +3,7 @@
@@ -1060,7 +1126,7 @@ index 84de74e38e..f131f6e08e 100644
  impl ChatComposer {
      pub(crate) fn warning_notice_contains(&self, position: ratatui::layout::Position) -> bool {
 diff --git a/codex-rs/tui/src/bottom_pane/chat_composer/warning_notice_tests.rs b/codex-rs/tui/src/bottom_pane/chat_composer/warning_notice_tests.rs
-index 2e11e17236..42a059b066 100644
+index 2e11e17236dc4233c655b112ff7fbe235fcb0871..42a059b0660c317a1f5504bb09c2bfe69d8dc2db 100644
 --- a/codex-rs/tui/src/bottom_pane/chat_composer/warning_notice_tests.rs
 +++ b/codex-rs/tui/src/bottom_pane/chat_composer/warning_notice_tests.rs
 @@ -16,7 +16,7 @@ fn composer() -> ChatComposer {
@@ -1073,7 +1139,7 @@ index 2e11e17236..42a059b066 100644
  }
  
 diff --git a/codex-rs/tui/src/bottom_pane/chat_composer_effort_tests.rs b/codex-rs/tui/src/bottom_pane/chat_composer_effort_tests.rs
-index aaae8c2d4f..9a04ffb184 100644
+index aaae8c2d4ff90526059decd1fb06a8608c28909a..9a04ffb184f838b75160cfddeb50520c8b5fc6e6 100644
 --- a/codex-rs/tui/src/bottom_pane/chat_composer_effort_tests.rs
 +++ b/codex-rs/tui/src/bottom_pane/chat_composer_effort_tests.rs
 @@ -7,7 +7,10 @@ use pretty_assertions::assert_eq;
@@ -1248,7 +1314,7 @@ index aaae8c2d4f..9a04ffb184 100644
  fn ultra_accent_upgrades_prompt_glyph() {
      snapshot_composer_state_with_width(
 diff --git a/codex-rs/tui/src/bottom_pane/footer.rs b/codex-rs/tui/src/bottom_pane/footer.rs
-index b81f2c3..4320210 100644
+index f0b809ce50cd238a1e5208ccdd999695c1783658..bc890b17aeb04a034c572f357a1ba93ef84460eb 100644
 --- a/codex-rs/tui/src/bottom_pane/footer.rs
 +++ b/codex-rs/tui/src/bottom_pane/footer.rs
 @@ -45,6 +45,7 @@
@@ -1278,7 +1344,7 @@ index b81f2c3..4320210 100644
      pub(crate) active_agent_label: Option<String>,
  }
  
-@@ -275,6 +277,116 @@ pub(crate) fn render_footer_line(area: Rect, buf: &mut Buffer, line: Line<'stati
+@@ -277,6 +279,116 @@ pub(crate) fn render_footer_line(area: Rect, buf: &mut Buffer, line: Line<'stati
      .render(area, buf);
  }
  
@@ -1395,7 +1461,7 @@ index b81f2c3..4320210 100644
  /// Render footer content directly from `FooterProps`.
  ///
  /// This is intentionally not part of the width-based collapse/fallback logic.
-@@ -688,16 +800,17 @@ fn right_aligned_x(area: Rect, content_width: u16) -> Option<u16> {
+@@ -690,16 +802,17 @@ fn right_aligned_x(area: Rect, content_width: u16) -> Option<u16> {
  
  pub(crate) fn max_left_width_for_right(area: Rect, right_width: u16) -> Option<u16> {
      let context_x = right_aligned_x(area, right_width)?;
@@ -1416,7 +1482,7 @@ index b81f2c3..4320210 100644
  }
  
  pub(crate) fn can_show_left_with_context(area: Rect, left_width: u16, context_width: u16) -> bool {
-@@ -707,7 +820,9 @@ pub(crate) fn can_show_left_with_context(area: Rect, left_width: u16, context_wi
+@@ -709,7 +822,9 @@ pub(crate) fn can_show_left_with_context(area: Rect, left_width: u16, context_wi
      if left_width == 0 {
          return true;
      }
@@ -1427,7 +1493,7 @@ index b81f2c3..4320210 100644
      left_extent <= context_x.saturating_sub(area.x)
  }
  
-@@ -770,10 +885,8 @@ fn footer_from_props_lines(
+@@ -772,10 +887,8 @@ fn footer_from_props_lines(
      show_queue_hint: bool,
  ) -> Vec<Line<'static>> {
      let key_hints = props.key_hints;
@@ -1440,7 +1506,7 @@ index b81f2c3..4320210 100644
      }
      match props.mode {
          FooterMode::QuitShortcutReminder => {
-@@ -819,43 +932,34 @@ fn footer_from_props_lines(
+@@ -821,43 +934,34 @@ fn footer_from_props_lines(
      }
  }
  
@@ -1496,7 +1562,7 @@ index b81f2c3..4320210 100644
  }
  
  /// Whether the current footer mode allows contextual information to replace instructional hints.
-@@ -972,7 +1076,6 @@ pub(crate) fn context_window_line(percent: Option<i64>, used_tokens: Option<i64>
+@@ -974,7 +1078,6 @@ pub(crate) fn context_window_line(percent: Option<i64>, used_tokens: Option<i64>
  #[cfg(test)]
  mod tests {
      use super::*;
@@ -1504,7 +1570,7 @@ index b81f2c3..4320210 100644
      use crate::test_backend::VT100Backend;
      use insta::assert_snapshot;
      use pretty_assertions::assert_eq;
-@@ -1038,6 +1141,71 @@ mod tests {
+@@ -1040,6 +1143,71 @@ mod tests {
          );
      }
  
@@ -1576,7 +1642,7 @@ index b81f2c3..4320210 100644
      fn draw_footer_frame<B: Backend>(
          terminal: &mut Terminal<B>,
          height: u16,
-@@ -1066,129 +1234,69 @@ mod tests {
+@@ -1068,129 +1236,69 @@ mod tests {
                      | FooterMode::ShortcutOverlay
                      | FooterMode::EscHint => false,
                  };
@@ -1751,7 +1817,7 @@ index b81f2c3..4320210 100644
                          show_cycle_hint,
                          show_shortcuts_hint,
                          show_queue_hint,
-@@ -1231,7 +1339,12 @@ mod tests {
+@@ -1233,7 +1341,12 @@ mod tests {
          collaboration_mode_indicator: Option<CollaborationModeIndicator>,
          context_line: Line<'static>,
      ) {
@@ -1765,7 +1831,7 @@ index b81f2c3..4320210 100644
          let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
          draw_footer_frame(
              &mut terminal,
-@@ -1250,7 +1363,12 @@ mod tests {
+@@ -1252,7 +1365,12 @@ mod tests {
          collaboration_mode_indicator: Option<CollaborationModeIndicator>,
          context_line: Line<'static>,
      ) -> String {
@@ -1779,7 +1845,7 @@ index b81f2c3..4320210 100644
          let mut terminal = Terminal::new(VT100Backend::new(width, height)).expect("terminal");
          draw_footer_frame(
              &mut terminal,
-@@ -1270,7 +1388,12 @@ mod tests {
+@@ -1272,7 +1390,12 @@ mod tests {
          collaboration_mode_indicator: Option<CollaborationModeIndicator>,
          ide_context_active: bool,
      ) {
@@ -1793,7 +1859,7 @@ index b81f2c3..4320210 100644
          let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
          draw_footer_frame(
              &mut terminal,
-@@ -1283,6 +1406,116 @@ mod tests {
+@@ -1285,6 +1408,116 @@ mod tests {
          assert_snapshot!(name, terminal.backend());
      }
  
@@ -1910,7 +1976,7 @@ index b81f2c3..4320210 100644
      #[test]
      fn footer_snapshots() {
          snapshot_footer(
-@@ -1536,7 +1769,9 @@ mod tests {
+@@ -1521,7 +1754,9 @@ mod tests {
              collaboration_modes_enabled: false,
              is_wsl: false,
              quit_shortcut_key: key_hint::ctrl(KeyCode::Char('c')),
@@ -1921,7 +1987,7 @@ index b81f2c3..4320210 100644
              status_line_enabled: true,
              key_hints: FooterKeyHints::default_bindings(),
              active_agent_label: None,
-@@ -1552,7 +1787,9 @@ mod tests {
+@@ -1537,7 +1772,9 @@ mod tests {
              collaboration_modes_enabled: false,
              is_wsl: false,
              quit_shortcut_key: key_hint::ctrl(KeyCode::Char('c')),
@@ -1932,7 +1998,7 @@ index b81f2c3..4320210 100644
              status_line_enabled: true,
              key_hints: FooterKeyHints::default_bindings(),
              active_agent_label: None,
-@@ -1568,7 +1805,9 @@ mod tests {
+@@ -1553,7 +1790,9 @@ mod tests {
              collaboration_modes_enabled: false,
              is_wsl: false,
              quit_shortcut_key: key_hint::ctrl(KeyCode::Char('c')),
@@ -1943,7 +2009,7 @@ index b81f2c3..4320210 100644
              status_line_enabled: true,
              key_hints: FooterKeyHints::default_bindings(),
              active_agent_label: None,
-@@ -1659,16 +1898,18 @@ mod tests {
+@@ -1644,16 +1883,18 @@ mod tests {
              collaboration_modes_enabled: true,
              is_wsl: false,
              quit_shortcut_key: key_hint::ctrl(KeyCode::Char('c')),
@@ -1966,7 +2032,7 @@ index b81f2c3..4320210 100644
              /*width*/ 40,
              &props,
              Some(CollaborationModeIndicator::Plan),
-@@ -1699,7 +1940,9 @@ mod tests {
+@@ -1684,7 +1925,9 @@ mod tests {
              collaboration_modes_enabled: false,
              is_wsl: false,
              quit_shortcut_key: key_hint::ctrl(KeyCode::Char('c')),
@@ -1977,7 +2043,7 @@ index b81f2c3..4320210 100644
              status_line_enabled: true,
              key_hints: FooterKeyHints::default_bindings(),
              active_agent_label: Some("Robie [explorer]".to_string()),
-@@ -1709,7 +1952,7 @@ mod tests {
+@@ -1694,7 +1937,7 @@ mod tests {
      }
  
      #[test]
@@ -1986,7 +2052,7 @@ index b81f2c3..4320210 100644
          let props = FooterProps {
              mode: FooterMode::ComposerEmpty,
              esc_backtrack_hint: false,
-@@ -1718,10 +1961,12 @@ mod tests {
+@@ -1703,10 +1946,12 @@ mod tests {
              collaboration_modes_enabled: true,
              is_wsl: false,
              quit_shortcut_key: key_hint::ctrl(KeyCode::Char('c')),
@@ -2003,17 +2069,17 @@ index b81f2c3..4320210 100644
              status_line_enabled: true,
              key_hints: FooterKeyHints::default_bindings(),
              active_agent_label: None,
-@@ -1739,12 +1984,20 @@ mod tests {
+@@ -1724,12 +1969,20 @@ mod tests {
              "mode indicator should remain visible"
          );
          assert!(
--            !collapsed.contains("shift+tab to cycle"),
+-            !collapsed.contains("⇧tab to cycle"),
 -            "compact mode indicator should be used when space is tight"
 -        );
 -        assert!(
 -            screen.contains('…'),
 -            "status line should be truncated with ellipsis to keep mode indicator"
-+            collapsed.contains("shift+tab to cycle"),
++            collapsed.contains("⇧tab to cycle"),
 +            "full mode indicator should remain when the final status row can share"
          );
 +        for field in [
@@ -2031,10 +2097,10 @@ index b81f2c3..4320210 100644
      }
  }
 diff --git a/codex-rs/tui/src/bottom_pane/mod.rs b/codex-rs/tui/src/bottom_pane/mod.rs
-index 912880eed1..b480968170 100644
+index ae9405e9ff3718aa8d3c6c3dfac487a3c2688823..058101cff4fe34f95876b0857993ccf5d09b4da4 100644
 --- a/codex-rs/tui/src/bottom_pane/mod.rs
 +++ b/codex-rs/tui/src/bottom_pane/mod.rs
-@@ -82,6 +82,7 @@ mod multi_select_picker;
+@@ -89,6 +89,7 @@ pub(crate) use multi_select_picker::MultiSelectPicker;
  mod question_tests;
  mod questions;
  mod request_user_input;
@@ -2042,7 +2108,7 @@ index 912880eed1..b480968170 100644
  mod status_line_setup;
  mod status_line_style;
  mod status_surface_preview;
-@@ -111,6 +112,7 @@ pub(crate) use async_questions::QuestionSubmission;
+@@ -118,6 +119,7 @@ pub(crate) use async_questions::QuestionSubmission;
  pub(crate) use mcp_server_elicitation::McpServerElicitationFormRequest;
  pub(crate) use mcp_server_elicitation::McpServerElicitationOverlay;
  pub(crate) use request_user_input::RequestUserInputOverlay;
@@ -2050,7 +2116,7 @@ index 912880eed1..b480968170 100644
  pub(crate) use status_line_style::status_line_from_segments;
  pub(crate) use voice_strip::VoiceStripPhase;
  pub(crate) use voice_strip::VoiceStripState;
-@@ -2321,7 +2323,7 @@ impl BottomPane {
+@@ -2509,7 +2511,7 @@ impl BottomPane {
          self.request_redraw();
      }
  
@@ -2061,7 +2127,7 @@ index 912880eed1..b480968170 100644
          }
 diff --git a/codex-rs/tui/src/bottom_pane/snapshots/codex_tui__bottom_pane__chat_composer__tests__full_cycle_indicator_shares_after_whole_field_reflow.snap b/codex-rs/tui/src/bottom_pane/snapshots/codex_tui__bottom_pane__chat_composer__tests__full_cycle_indicator_shares_after_whole_field_reflow.snap
 new file mode 100644
-index 0000000000..3de70fdeaa
+index 0000000000000000000000000000000000000000..47714d8f9ef2d01d3d8f762398df0487f58c6289
 --- /dev/null
 +++ b/codex-rs/tui/src/bottom_pane/snapshots/codex_tui__bottom_pane__chat_composer__tests__full_cycle_indicator_shares_after_whole_field_reflow.snap
 @@ -0,0 +1,9 @@
@@ -2069,14 +2135,14 @@ index 0000000000..3de70fdeaa
 +source: tui/src/bottom_pane/chat_composer.rs
 +expression: terminal.backend()
 +---
-+"                                          "
-+"› Ask Codex to do anything                "
-+"                                          "
-+"  aaaaaa                                  "
-+"  bb · cc Plan mode (shift+tab to cycle)  "
++"                                      "
++"› Ask Codex to do anything            "
++"                                      "
++"  aaaaaa                              "
++"  bb · cc Plan mode (⇧tab to cycle)  "
 diff --git a/codex-rs/tui/src/bottom_pane/snapshots/codex_tui__bottom_pane__chat_composer__tests__multiline_status_footer_reserves_every_row.snap b/codex-rs/tui/src/bottom_pane/snapshots/codex_tui__bottom_pane__chat_composer__tests__multiline_status_footer_reserves_every_row.snap
 new file mode 100644
-index 0000000000..1f9fd87c55
+index 0000000000000000000000000000000000000000..1f9fd87c55ab6175096d20d601d333cd6efa997c
 --- /dev/null
 +++ b/codex-rs/tui/src/bottom_pane/snapshots/codex_tui__bottom_pane__chat_composer__tests__multiline_status_footer_reserves_every_row.snap
 @@ -0,0 +1,10 @@
@@ -2094,7 +2160,7 @@ diff --git a/codex-rs/tui/src/bottom_pane/snapshots/codex_tui__bottom_pane__foot
 similarity index 55%
 rename from codex-rs/tui/src/bottom_pane/snapshots/codex_tui__bottom_pane__footer__tests__footer_status_line_truncated_with_gap.snap
 rename to codex-rs/tui/src/bottom_pane/snapshots/codex_tui__bottom_pane__footer__tests__footer_status_line_exactly_two_rows.snap
-index cef1531fd6..1f1010308f 100644
+index cef1531fd6e4164fa48305fd8c085354089dc515..1f1010308fe61aa24196dfabb195a7bb8ab5daaf 100644
 --- a/codex-rs/tui/src/bottom_pane/snapshots/codex_tui__bottom_pane__footer__tests__footer_status_line_truncated_with_gap.snap
 +++ b/codex-rs/tui/src/bottom_pane/snapshots/codex_tui__bottom_pane__footer__tests__footer_status_line_exactly_two_rows.snap
 @@ -2,4 +2,5 @@
@@ -2106,7 +2172,7 @@ index cef1531fd6..1f1010308f 100644
 +"  Context 70% used          "
 diff --git a/codex-rs/tui/src/bottom_pane/snapshots/codex_tui__bottom_pane__footer__tests__footer_status_line_wraps_with_gap.snap b/codex-rs/tui/src/bottom_pane/snapshots/codex_tui__bottom_pane__footer__tests__footer_status_line_wraps_with_gap.snap
 new file mode 100644
-index 0000000000..fd93565691
+index 0000000000000000000000000000000000000000..fd93565691fd0fbc359675e1e1377bf3846830cd
 --- /dev/null
 +++ b/codex-rs/tui/src/bottom_pane/snapshots/codex_tui__bottom_pane__footer__tests__footer_status_line_wraps_with_gap.snap
 @@ -0,0 +1,6 @@
@@ -2118,7 +2184,7 @@ index 0000000000..fd93565691
 +"  before the mode indicator  Plan mode  "
 diff --git a/codex-rs/tui/src/bottom_pane/status_line.rs b/codex-rs/tui/src/bottom_pane/status_line.rs
 new file mode 100644
-index 0000000000..2d6bf1f201
+index 0000000000000000000000000000000000000000..2d6bf1f20136fb4c15005d5f42cfa970648bb39f
 --- /dev/null
 +++ b/codex-rs/tui/src/bottom_pane/status_line.rs
 @@ -0,0 +1,411 @@
@@ -2534,10 +2600,10 @@ index 0000000000..2d6bf1f201
 +#[path = "status_line_tests.rs"]
 +mod tests;
 diff --git a/codex-rs/tui/src/bottom_pane/status_line_setup.rs b/codex-rs/tui/src/bottom_pane/status_line_setup.rs
-index 64562d146c..37fd00c235 100644
+index 9567424fbb9b79eba31388a1e1449c500d36fb59..4fce5cede4b911dec33f2a7a2ecaa91d09c7ffb1 100644
 --- a/codex-rs/tui/src/bottom_pane/status_line_setup.rs
 +++ b/codex-rs/tui/src/bottom_pane/status_line_setup.rs
-@@ -340,13 +340,15 @@ impl StatusLineSetupView {
+@@ -345,13 +345,15 @@ impl StatusLineSetupView {
                      .find(|item| item.id == STATUS_LINE_USE_THEME_COLORS_ITEM_ID)
                      .map(|item| item.enabled)
                      .unwrap_or(true);
@@ -2560,7 +2626,7 @@ index 64562d146c..37fd00c235 100644
              })
              .on_confirm(|ids, app_event| {
                  let use_theme_colors = ids
-@@ -432,7 +434,6 @@ mod tests {
+@@ -441,7 +443,6 @@ mod tests {
      use pretty_assertions::assert_eq;
      use ratatui::buffer::Buffer;
      use ratatui::layout::Rect;
@@ -2568,7 +2634,7 @@ index 64562d146c..37fd00c235 100644
      use tokio::sync::mpsc::unbounded_channel;
  
      use crate::app_event::AppEvent;
-@@ -582,14 +583,14 @@ mod tests {
+@@ -591,14 +592,14 @@ mod tests {
          ];
  
          assert_eq!(
@@ -2586,7 +2652,7 @@ index 64562d146c..37fd00c235 100644
              Some("gpt-5 · /repo".to_string())
          );
      }
-@@ -620,14 +621,14 @@ mod tests {
+@@ -629,14 +630,14 @@ mod tests {
          ];
  
          assert_eq!(
@@ -2604,7 +2670,7 @@ index 64562d146c..37fd00c235 100644
              Some("gpt-5 · feat/awesome-feature".to_string())
          );
      }
-@@ -664,14 +665,14 @@ mod tests {
+@@ -673,14 +674,14 @@ mod tests {
          ];
  
          assert_eq!(
@@ -2622,7 +2688,7 @@ index 64562d146c..37fd00c235 100644
              Some("gpt-5 · Roadmap cleanup".to_string())
          );
      }
-@@ -791,13 +792,4 @@ mod tests {
+@@ -800,13 +801,4 @@ mod tests {
              .collect::<Vec<_>>()
              .join("\n")
      }
@@ -2637,7 +2703,7 @@ index 64562d146c..37fd00c235 100644
 -    }
  }
 diff --git a/codex-rs/tui/src/bottom_pane/status_line_style.rs b/codex-rs/tui/src/bottom_pane/status_line_style.rs
-index 8c44ce425b..e6f5eac8da 100644
+index 6ef9003c5887ed3cf8f614d3079f95fa96e61ae8..423a2902f1b70960fedaf0efe27f923c4e71009c 100644
 --- a/codex-rs/tui/src/bottom_pane/status_line_style.rs
 +++ b/codex-rs/tui/src/bottom_pane/status_line_style.rs
 @@ -2,10 +2,10 @@
@@ -2652,7 +2718,7 @@ index 8c44ce425b..e6f5eac8da 100644
  use super::status_line_setup::StatusLineItem;
  use crate::render::highlight::foreground_style_for_scopes;
  use crate::style::readable_color_on;
-@@ -13,7 +13,6 @@ use crate::style::secondary_text_style;
+@@ -15,7 +15,6 @@ use crate::terminal_palette::effective_stdout_color_level;
  use crate::thread_color::thread_color;
  use codex_protocol::ThreadId;
  
@@ -2660,7 +2726,7 @@ index 8c44ce425b..e6f5eac8da 100644
  const STATUS_LINE_COLOR_SATURATION_PERCENT: u16 = 85;
  const STATUS_LINE_COLOR_BRIGHTNESS_PERCENT: u16 = 100;
  
-@@ -92,7 +91,7 @@ pub(crate) fn status_line_from_segments<I>(
+@@ -96,7 +95,7 @@ pub(crate) fn status_line_from_segments<I>(
      segments: I,
      use_theme_colors: bool,
      thread_id: Option<ThreadId>,
@@ -2669,7 +2735,7 @@ index 8c44ce425b..e6f5eac8da 100644
  where
      I: IntoIterator<Item = (StatusLineItem, String)>,
  {
-@@ -106,16 +105,13 @@ fn status_line_from_segments_with_resolver<I, F>(
+@@ -110,16 +109,13 @@ fn status_line_from_segments_with_resolver<I, F>(
      use_theme_colors: bool,
      thread_id: Option<ThreadId>,
      theme_style_for_accent: F,
@@ -2688,7 +2754,7 @@ index 8c44ce425b..e6f5eac8da 100644
          let style = if use_theme_colors
              && matches!(
                  item,
-@@ -145,10 +141,9 @@ where
+@@ -153,10 +149,9 @@ where
          } else {
              style
          };
@@ -2701,7 +2767,7 @@ index 8c44ce425b..e6f5eac8da 100644
  }
  
  fn soften_status_line_style(mut style: Style) -> Style {
-@@ -219,7 +214,7 @@ mod tests {
+@@ -227,7 +222,7 @@ mod tests {
  
      #[test]
      fn status_line_segments_preserve_order_and_plain_text() {
@@ -2710,7 +2776,7 @@ index 8c44ce425b..e6f5eac8da 100644
              [
                  (StatusLineItem::ModelName, "gpt-5".to_string()),
                  (StatusLineItem::CurrentDir, "/repo".to_string()),
-@@ -231,18 +226,31 @@ mod tests {
+@@ -239,18 +234,31 @@ mod tests {
          )
          .expect("status line");
  
@@ -2750,7 +2816,7 @@ index 8c44ce425b..e6f5eac8da 100644
              [
                  (StatusLineItem::ModelName, "gpt-5".to_string()),
                  (StatusLineItem::ContextUsed, "Context 12% used".to_string()),
-@@ -255,6 +263,7 @@ mod tests {
+@@ -263,6 +271,7 @@ mod tests {
              },
          )
          .expect("status line");
@@ -2758,7 +2824,7 @@ index 8c44ce425b..e6f5eac8da 100644
  
          assert_eq!(line.spans[0].style.fg, Some(Color::Red));
          assert!(!line.spans[0].style.add_modifier.contains(Modifier::DIM));
-@@ -265,7 +274,7 @@ mod tests {
+@@ -273,7 +282,7 @@ mod tests {
  
      #[test]
      fn thread_usage_items_share_an_accent_and_secondary_separator() {
@@ -2767,7 +2833,7 @@ index 8c44ce425b..e6f5eac8da 100644
              [
                  (StatusLineItem::ThreadCredits, "5.2 credits".to_string()),
                  (StatusLineItem::EstimatedThreadCost, "~$0.21".to_string()),
-@@ -275,6 +284,7 @@ mod tests {
+@@ -283,6 +292,7 @@ mod tests {
              |_| None,
          )
          .expect("thread usage status line");
@@ -2775,23 +2841,23 @@ index 8c44ce425b..e6f5eac8da 100644
  
          assert_eq!(line_text(&line), "5.2 credits · ~$0.21");
          assert_eq!(line.spans[0].style, line.spans[2].style);
-@@ -284,13 +294,14 @@ mod tests {
-     #[test]
-     #[allow(clippy::disallowed_methods)]
-     fn status_line_segments_soften_rgb_theme_styles_without_dimming_text() {
--        let line = status_line_from_segments_with_resolver(
-+        let status = status_line_from_segments_with_resolver(
-             [(StatusLineItem::ModelName, "gpt-5".to_string())],
-             /*use_theme_colors*/ true,
-             /*thread_id*/ None,
-             |_| Some(Style::default().fg(Color::Rgb(255, 0, 0))),
-         )
-         .expect("status line");
-+        let line = status.to_line();
+@@ -297,13 +307,14 @@ mod tests {
+             bg: (0, 0, 0),
+         };
+         crate::terminal_palette::with_test_default_colors(colors, || {
+-            let line = status_line_from_segments_with_resolver(
++            let status = status_line_from_segments_with_resolver(
+                 [(StatusLineItem::ModelName, "gpt-5".to_string())],
+                 /*use_theme_colors*/ true,
+                 /*thread_id*/ None,
+                 |_| Some(Style::default().fg(Color::Rgb(255, 0, 0))),
+             )
+             .expect("status line");
++            let line = status.to_line();
  
-         assert_eq!(
-             line.spans[0].style.fg,
-@@ -304,7 +315,7 @@ mod tests {
+             assert_eq!(
+                 line.spans[0].style.fg,
+@@ -318,7 +329,7 @@ mod tests {
  
      #[test]
      fn status_line_segments_can_disable_theme_colors() {
@@ -2800,7 +2866,7 @@ index 8c44ce425b..e6f5eac8da 100644
              [
                  (StatusLineItem::ModelName, "gpt-5".to_string()),
                  (StatusLineItem::ContextUsed, "Context 12% used".to_string()),
-@@ -314,6 +325,7 @@ mod tests {
+@@ -328,6 +339,7 @@ mod tests {
              |_| Some(Style::default().red()),
          )
          .expect("status line");
@@ -2808,7 +2874,7 @@ index 8c44ce425b..e6f5eac8da 100644
  
          assert_eq!(line_text(&line), "gpt-5 · Context 12% used");
          assert_eq!(line.spans[0].style, secondary_text_style());
-@@ -323,13 +335,14 @@ mod tests {
+@@ -337,13 +349,14 @@ mod tests {
  
      #[test]
      fn pull_request_number_uses_link_style() {
@@ -2824,7 +2890,7 @@ index 8c44ce425b..e6f5eac8da 100644
  
          assert_eq!(line.spans[0].style, secondary_text_style().underlined());
      }
-@@ -383,7 +396,7 @@ mod tests {
+@@ -397,7 +410,7 @@ mod tests {
                  /*x*/ 0, /*y*/ 0, /*width*/ 42, /*height*/ 1,
              );
              let mut buffer = Buffer::empty(area);
@@ -2835,7 +2901,7 @@ index 8c44ce425b..e6f5eac8da 100644
      }
 diff --git a/codex-rs/tui/src/bottom_pane/status_line_tests.rs b/codex-rs/tui/src/bottom_pane/status_line_tests.rs
 new file mode 100644
-index 0000000000..04fcff807f
+index 0000000000000000000000000000000000000000..04fcff807fc7a0fa791a96ae1d1ebaecbed5ac97
 --- /dev/null
 +++ b/codex-rs/tui/src/bottom_pane/status_line_tests.rs
 @@ -0,0 +1,178 @@
@@ -3018,7 +3084,7 @@ index 0000000000..04fcff807f
 +    assert_eq!(status.layout(usize::MAX), expected);
 +}
 diff --git a/codex-rs/tui/src/bottom_pane/status_surface_preview.rs b/codex-rs/tui/src/bottom_pane/status_surface_preview.rs
-index f2e6f9005e..9b1c2b7776 100644
+index 7389236c07c69377232cbcb097e812f1af5a0484..eb4ce2fdfa6f5805f3048a7a230bbca7e03a49d3 100644
 --- a/codex-rs/tui/src/bottom_pane/status_surface_preview.rs
 +++ b/codex-rs/tui/src/bottom_pane/status_surface_preview.rs
 @@ -1,8 +1,8 @@
@@ -3031,7 +3097,7 @@ index f2e6f9005e..9b1c2b7776 100644
  use super::status_line_from_segments;
  use super::status_line_setup::StatusLineItem;
  
-@@ -237,7 +237,7 @@ impl StatusSurfacePreviewData {
+@@ -240,7 +240,7 @@ impl StatusSurfacePreviewData {
          &self,
          items: I,
          use_theme_colors: bool,
@@ -3041,10 +3107,10 @@ index f2e6f9005e..9b1c2b7776 100644
          I: IntoIterator<Item = StatusLineItem>,
      {
 diff --git a/codex-rs/tui/src/chatwidget.rs b/codex-rs/tui/src/chatwidget.rs
-index 15778d90e5..41056ab31c 100644
+index 2f74f843d59d8578fe32a195de0c664bf049e4fe..ab9e43b7574169b9e08669e9264a66020f08bad3 100644
 --- a/codex-rs/tui/src/chatwidget.rs
 +++ b/codex-rs/tui/src/chatwidget.rs
-@@ -384,6 +384,7 @@ use self::status_state::StatusIndicatorState;
+@@ -387,6 +387,7 @@ use self::status_state::StatusIndicatorState;
  use self::status_state::StatusState;
  use self::status_state::TerminalTitleStatusKind;
  mod status_controls;
@@ -3052,7 +3118,7 @@ index 15778d90e5..41056ab31c 100644
  mod status_surfaces;
  mod streaming;
  use self::status_surfaces::CachedProjectRootName;
-@@ -763,6 +764,8 @@ pub(crate) struct ChatWidget {
+@@ -773,6 +774,8 @@ pub(crate) struct ChatWidget {
      status_line_workspace_headline_last_requested_at: Option<Instant>,
      // Set after the backend reports the workspace-message feature gate is disabled.
      status_line_workspace_messages_disabled: bool,
@@ -3061,19 +3127,19 @@ index 15778d90e5..41056ab31c 100644
      // Cached backend-estimated cost and bounded refresh state for the current thread.
      thread_usage: thread_usage::ThreadUsageState,
      // Current thread-goal status shown in the status line when plan mode is inactive.
-@@ -1176,6 +1179,7 @@ impl ChatWidget {
+@@ -1186,6 +1189,7 @@ impl ChatWidget {
              self.refresh_terminal_title();
          }
          self.refresh_status_line_if_workspace_headline_due();
 +        self.refresh_status_line_command_if_due();
          self.refresh_thread_usage_if_settlement_due();
+         self.refresh_terminal_program_status();
      }
- 
 diff --git a/codex-rs/tui/src/chatwidget/constructor.rs b/codex-rs/tui/src/chatwidget/constructor.rs
-index 755da1e626..dbcc79d612 100644
+index 05dde949edeadc4c4ef2c510d13c19f195a9b43a..51ede9d16252a7be7f6e627d5b027d660b8b3db3 100644
 --- a/codex-rs/tui/src/chatwidget/constructor.rs
 +++ b/codex-rs/tui/src/chatwidget/constructor.rs
-@@ -278,6 +278,7 @@ impl ChatWidget {
+@@ -283,6 +283,7 @@ impl ChatWidget {
              next_status_line_workspace_headline_request_id: 0,
              status_line_workspace_headline_last_requested_at: None,
              status_line_workspace_messages_disabled: false,
@@ -3082,7 +3148,7 @@ index 755da1e626..dbcc79d612 100644
              current_goal_status_indicator: None,
              current_goal_status: None,
 diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__side_context_label_shows_parent_status.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__side_context_label_shows_parent_status.snap
-index 47258c1616..510298d575 100644
+index 47258c161662bcfeabb10d28f114c85b6fa7ba72..510298d575efd30dc7a4f8cecd1221d4c0a8a82d 100644
 --- a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__side_context_label_shows_parent_status.snap
 +++ b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__side_context_label_shows_parent_status.snap
 @@ -6,4 +6,5 @@ expression: terminal.backend()
@@ -3093,7 +3159,7 @@ index 47258c1616..510298d575 100644
  " Side from main thread · main needs input · ctrl+/ to switch · ctrl+c to close  "
 diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__status_line_goal_indicator_preserves_multiline_footer_fields.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__status_line_goal_indicator_preserves_multiline_footer_fields.snap
 new file mode 100644
-index 0000000000..003e9b6ffd
+index 0000000000000000000000000000000000000000..003e9b6ffd2ce0dfb8609a88f2dd9a063296284e
 --- /dev/null
 +++ b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__status_line_goal_indicator_preserves_multiline_footer_fields.snap
 @@ -0,0 +1,13 @@
@@ -3112,7 +3178,7 @@ index 0000000000..003e9b6ffd
 +"  Goal paused (/goal resume)"
 diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__status_line_mixed_rows_only_separate_shared_fields.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__status_line_mixed_rows_only_separate_shared_fields.snap
 new file mode 100644
-index 0000000000..47c3df3b11
+index 0000000000000000000000000000000000000000..47c3df3b113f2b18fb66392a31822e37754c9b81
 --- /dev/null
 +++ b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__status_line_mixed_rows_only_separate_shared_fields.snap
 @@ -0,0 +1,11 @@
@@ -3129,7 +3195,7 @@ index 0000000000..47c3df3b11
 +"  end             "
 diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__status_line_narrow_terminal_uses_all_required_footer_rows.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__status_line_narrow_terminal_uses_all_required_footer_rows.snap
 new file mode 100644
-index 0000000000..22e12610e4
+index 0000000000000000000000000000000000000000..22e12610e4a256fb2ffb0dac47b336cd0ea92242
 --- /dev/null
 +++ b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__status_line_narrow_terminal_uses_all_required_footer_rows.snap
 @@ -0,0 +1,12 @@
@@ -3147,7 +3213,7 @@ index 0000000000..22e12610e4
 +"  123K used                 "
 diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__status_line_right_indicators_preserve_multiline_footer_fields.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__status_line_right_indicators_preserve_multiline_footer_fields.snap
 new file mode 100644
-index 0000000000..88074ea93c
+index 0000000000000000000000000000000000000000..88074ea93cd57d089530f5eba6a7256f21f788ca
 --- /dev/null
 +++ b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__status_line_right_indicators_preserve_multiline_footer_fields.snap
 @@ -0,0 +1,13 @@
@@ -3166,7 +3232,7 @@ index 0000000000..88074ea93c
 +"   Plan mode · IDE context  "
 diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__status_line_unicode_graphemes_and_styles_survive_widget_reflow.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__status_line_unicode_graphemes_and_styles_survive_widget_reflow.snap
 new file mode 100644
-index 0000000000..40826d9511
+index 0000000000000000000000000000000000000000..40826d9511b438d0610539132fdd99ab6a858cac
 --- /dev/null
 +++ b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__status_line_unicode_graphemes_and_styles_survive_widget_reflow.snap
 @@ -0,0 +1,10 @@
@@ -3181,7 +3247,7 @@ index 0000000000..40826d9511
 +"  模型👩‍💻é状 " Hidden by multi-width symbols: [(3, " "), (5, " "), (7, " "), (10, " ")]
 +"  态 · done " Hidden by multi-width symbols: [(3, " ")]
 diff --git a/codex-rs/tui/src/chatwidget/status_controls.rs b/codex-rs/tui/src/chatwidget/status_controls.rs
-index 6dc0ab9077..17baf79738 100644
+index 692eba105a92c446fd4ffb8a3440c08b7b88134c..33a7f3ca40f9407e730a92da113ea63cc4b0b339 100644
 --- a/codex-rs/tui/src/chatwidget/status_controls.rs
 +++ b/codex-rs/tui/src/chatwidget/status_controls.rs
 @@ -5,6 +5,7 @@
@@ -3203,7 +3269,7 @@ index 6dc0ab9077..17baf79738 100644
  
 diff --git a/codex-rs/tui/src/chatwidget/status_line_command.rs b/codex-rs/tui/src/chatwidget/status_line_command.rs
 new file mode 100644
-index 0000000000..4ad6f918c3
+index 0000000000000000000000000000000000000000..4ad6f918c3320be9358019c063a56df3b1de57b8
 --- /dev/null
 +++ b/codex-rs/tui/src/chatwidget/status_line_command.rs
 @@ -0,0 +1,368 @@
@@ -3577,7 +3643,7 @@ index 0000000000..4ad6f918c3
 +mod tests;
 diff --git a/codex-rs/tui/src/chatwidget/status_line_command_tests.rs b/codex-rs/tui/src/chatwidget/status_line_command_tests.rs
 new file mode 100644
-index 0000000000..22257dfc58
+index 0000000000000000000000000000000000000000..22257dfc584da68aca9a8224e9d1d5119bd6f531
 --- /dev/null
 +++ b/codex-rs/tui/src/chatwidget/status_line_command_tests.rs
 @@ -0,0 +1,79 @@
@@ -3661,7 +3727,7 @@ index 0000000000..22257dfc58
 +    assert!(chat.status_line_command.pending_request_id.is_some());
 +}
 diff --git a/codex-rs/tui/src/chatwidget/status_surfaces.rs b/codex-rs/tui/src/chatwidget/status_surfaces.rs
-index 616dd6df1e..301a361083 100644
+index a3946abd13fb0cc06f1fddd80b42e815fe35e8aa..d5f337bd36ececa76d4a70a8ba260ef13e1b187f 100644
 --- a/codex-rs/tui/src/chatwidget/status_surfaces.rs
 +++ b/codex-rs/tui/src/chatwidget/status_surfaces.rs
 @@ -4,6 +4,7 @@
@@ -3672,15 +3738,15 @@ index 616dd6df1e..301a361083 100644
  use crate::bottom_pane::status_line_from_segments;
  use crate::branch_summary;
  use crate::chatwidget::limit_label_for_window;
-@@ -13,6 +14,7 @@ use crate::model_catalog::LUNA_RESERVE_MODEL;
- use crate::status::format_credit_micros;
+@@ -14,6 +15,7 @@ use crate::status::format_credit_micros;
  use crate::status::format_estimated_usd_micros;
  use crate::status::format_tokens_compact;
+ use crate::terminal_program_status::ProgramStatus;
 +use codex_ansi_escape::ansi_escape_line;
  use codex_app_server_protocol::AskForApproval;
  use codex_config::ConfigLayerSource;
  use codex_config::os_host_name;
-@@ -200,7 +202,10 @@ impl ChatWidget {
+@@ -201,7 +203,10 @@ impl ChatWidget {
      }
  
      fn refresh_status_line_from_selections(&mut self, selections: &StatusSurfaceSelections) {
@@ -3692,7 +3758,7 @@ index 616dd6df1e..301a361083 100644
          self.bottom_pane.set_status_line_enabled(enabled);
          if !enabled {
              self.set_status_line(/*status_line*/ None);
-@@ -208,6 +213,12 @@ impl ChatWidget {
+@@ -209,6 +214,12 @@ impl ChatWidget {
              return;
          }
  
@@ -3705,7 +3771,7 @@ index 616dd6df1e..301a361083 100644
          let mut segments = Vec::new();
          for item in &selections.status_line_items {
              if let Some(value) = self.status_line_value_for_item(*item) {
-@@ -301,6 +312,7 @@ impl ChatWidget {
+@@ -302,6 +313,7 @@ impl ChatWidget {
      pub(crate) fn refresh_status_surfaces(&mut self) {
          self.bottom_pane
              .set_luna_reserve_active(self.current_model() == LUNA_RESERVE_MODEL);
@@ -3714,7 +3780,7 @@ index 616dd6df1e..301a361083 100644
          self.warn_invalid_status_line_items_once(&selections.invalid_status_line_items);
          self.warn_invalid_terminal_title_items_once(&selections.invalid_terminal_title_items);
 diff --git a/codex-rs/tui/src/chatwidget/tests/status_and_layout.rs b/codex-rs/tui/src/chatwidget/tests/status_and_layout.rs
-index c3aa1ba65d..cc85ed7327 100644
+index 301b55c2cc7bd0b1c94d137322b9951c04e49e46..ba38271405fa0233e4bd17bc8c7471d5fca909db 100644
 --- a/codex-rs/tui/src/chatwidget/tests/status_and_layout.rs
 +++ b/codex-rs/tui/src/chatwidget/tests/status_and_layout.rs
 @@ -1,5 +1,8 @@
@@ -4065,7 +4131,7 @@ index c3aa1ba65d..cc85ed7327 100644
  #[tokio::test]
  async fn token_count_none_resets_context_indicator() {
 diff --git a/codex-rs/tui/src/chatwidget/tests/status_surface_previews.rs b/codex-rs/tui/src/chatwidget/tests/status_surface_previews.rs
-index 60c741562a..80c8a72253 100644
+index 085d51619ea4d62ec7f2e17ffa7a3e8316cbb200..26d1d3d42b485cf45c3e0cda4a40d48a1a69ea69 100644
 --- a/codex-rs/tui/src/chatwidget/tests/status_surface_previews.rs
 +++ b/codex-rs/tui/src/chatwidget/tests/status_surface_previews.rs
 @@ -41,6 +41,7 @@ async fn thread_color_preview_matches_footer_while_auto_naming() {
@@ -4086,10 +4152,10 @@ index 60c741562a..80c8a72253 100644
  
  fn status_preview_line(chat: &mut ChatWidget, items: &[StatusLineItem]) -> String {
 diff --git a/codex-rs/tui/src/local_settings.rs b/codex-rs/tui/src/local_settings.rs
-index 4eb78a510c..1b821eea72 100644
+index a9bed997964720888482ca91205246f0ece50a93..411f8406a0c06c51bea991574ec5dfde76e49759 100644
 --- a/codex-rs/tui/src/local_settings.rs
 +++ b/codex-rs/tui/src/local_settings.rs
-@@ -79,6 +79,7 @@ impl LocalSettings {
+@@ -75,6 +75,7 @@ impl LocalSettings {
                  right_click_paste: config.tui_right_click_paste,
                  alternate_screen: config.tui_alternate_screen,
                  status_line: config.tui_status_line.clone(),
@@ -4097,69 +4163,3 @@ index 4eb78a510c..1b821eea72 100644
                  status_line_use_colors: config.tui_status_line_use_colors,
                  terminal_title: config.tui_terminal_title.clone(),
                  theme: config.tui_theme.clone(),
-diff --git a/codex-rs/tui/src/bottom_pane/chat_composer/snapshots/codex_tui__bottom_pane__chat_composer__status_surface__tests__multiline_status_surface_preserves_every_command_row.snap b/codex-rs/tui/src/bottom_pane/chat_composer/snapshots/codex_tui__bottom_pane__chat_composer__status_surface__tests__multiline_status_surface_preserves_every_command_row.snap
-new file mode 100644
-index 0000000000..b09753dfed
---- /dev/null
-+++ b/codex-rs/tui/src/bottom_pane/chat_composer/snapshots/codex_tui__bottom_pane__chat_composer__status_surface__tests__multiline_status_surface_preserves_every_command_row.snap
-@@ -0,0 +1,20 @@
-+---
-+source: tui/src/bottom_pane/chat_composer/status_surface_tests.rs
-+expression: text
-+---
-+
-+
-+
-+
-+
-+
-+
-+
-+
-+› Ask Codex
-+
-+  model row
-+  branch row
-+  limits row
-+  tokens row
-+  ? for shortcuts
-diff --git a/codex-rs/tui/src/bottom_pane/chat_composer/snapshots/codex_tui__bottom_pane__chat_composer__status_surface__tests__multiline_status_surface_chooses_cycle_hint_using_the_final_row.snap b/codex-rs/tui/src/bottom_pane/chat_composer/snapshots/codex_tui__bottom_pane__chat_composer__status_surface__tests__multiline_status_surface_chooses_cycle_hint_using_the_final_row.snap
-new file mode 100644
-index 0000000..5cb965d
---- /dev/null
-+++ b/codex-rs/tui/src/bottom_pane/chat_composer/snapshots/codex_tui__bottom_pane__chat_composer__status_surface__tests__multiline_status_surface_chooses_cycle_hint_using_the_final_row.snap
-@@ -0,0 +1,34 @@
-+---
-+source: tui/src/bottom_pane/chat_composer/status_surface_tests.rs
-+expression: "format!(\"{wide}\\n---\\n{narrow}\")"
-+---
-+
-+
-+
-+
-+
-+
-+
-+
-+
-+› Ask Codex
-+
-+  branch name branch name branch name branch name branch name
-+  tokens                        Plan mode (shift+tab to cycle)
-+  ? for shortcuts
-+---
-+
-+
-+
-+
-+
-+
-+
-+
-+
-+› Ask Codex
-+
-+  branch name branch name branch
-+   name branch name branch name
-+  tokens             Plan mode
-+  ? for shortcuts
