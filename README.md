@@ -159,6 +159,11 @@ command renderer, bottom pane, and multiline footer. Public builds use the focus
 `scripts/build-native.sh`. The full upstream suite is outside this gate; its version-sensitive
 snapshots and terminal/editor tests need separate validation.
 
+Pull requests also run the focused native gate and canonical package build on Apple Silicon
+macOS against both the checked-in baseline and the latest stable release candidate. These checks
+never publish or activate a package. This catches upstream drift and native regressions before a
+patch update is merged.
+
 ## Updating upstream
 
 The `Track Codex releases` GitHub Actions workflow checks the latest stable OpenAI release every

@@ -21,3 +21,51 @@ jobs:
           for script in install.sh scripts/*.sh tests/*.sh; do
             bash -n "$script"
           done
+
+  native:
+    name: Native macOS (${{ matrix.upstream }})
+    runs-on: macos-15
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        upstream: [pinned, latest]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Resolve upstream candidate
+        id: prepare
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          UPSTREAM: ${{ matrix.upstream }}
+        run: |
+          if [[ "$UPSTREAM" == latest ]]; then
+            # Exercise the same moving candidate as the release workflow.
+            python scripts/prepare-release.py
+          else
+            source upstream.lock
+            echo "release=${UPSTREAM_VERSION}+statusline.${PATCH_VERSION}" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Install native build dependencies
+        run: brew install dotslash jq just cargo-nextest
+      - name: Check patch, run native tests, and build package
+        env:
+          CODEX_STATUSLINE_PYTHON: python
+          CODEX_STATUSLINE_SHARE_ROOT: ${{ runner.temp }}/statusline
+          CODEX_STATUSLINE_RELEASE_NAME: ${{ steps.prepare.outputs.release }}
+          CODEX_STATUSLINE_ACTIVATE: '0'
+          CODEX_STATUSLINE_NATIVE_TESTS: '1'
+          CARGO_PROFILE_RELEASE_DEBUG: '0'
+          CARGO_PROFILE_DEV_DEBUG: '0'
+          CARGO_INCREMENTAL: '0'
+          GIT_TERMINAL_PROMPT: '0'
+        run: bash scripts/build-native.sh
+      - name: Validate release packaging without publishing
+        env:
+          RELEASE: ${{ steps.prepare.outputs.release }}
+        run: |
+          python scripts/package-release.py --package "$RUNNER_TEMP/statusline/releases/$RELEASE" --version "$RELEASE" --output dist
