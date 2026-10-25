@@ -3303,10 +3303,10 @@ index a5d020c7494b4efefaade56ccfb5fc6f7046203f..f38aac66462ec275047b1c6453f2da26
  
 diff --git a/codex-rs/tui/src/chatwidget/status_line_command.rs b/codex-rs/tui/src/chatwidget/status_line_command.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..4ad6f918c3320be9358019c063a56df3b1de57b8
+index 0000000000000000000000000000000000000000..772a17cc00cec54bb07005752caa88f0c2d5766e
 --- /dev/null
 +++ b/codex-rs/tui/src/chatwidget/status_line_command.rs
-@@ -0,0 +1,368 @@
+@@ -0,0 +1,369 @@
 +//! Command-backed custom status-line execution and payload generation.
 +
 +use super::*;
@@ -3327,7 +3327,6 @@ index 0000000000000000000000000000000000000000..4ad6f918c3320be9358019c063a56df3
 +    pub(super) pending_request_id: Option<u64>,
 +    pub(super) next_request_id: u64,
 +    pub(super) last_requested_at: Option<Instant>,
-+    pub(super) last_payload: Option<String>,
 +}
 +
 +#[derive(Serialize)]
@@ -3484,15 +3483,13 @@ index 0000000000000000000000000000000000000000..4ad6f918c3320be9358019c063a56df3
 +            self.status_line_command = StatusLineCommandState::default();
 +            return;
 +        };
-+        let payload = self.status_line_command_payload();
-+        let payload_changed = self.status_line_command.last_payload.as_deref() != Some(&payload);
 +        let refresh_interval =
 +            Duration::from_millis(config.refresh_interval_ms).max(MIN_REFRESH_INTERVAL);
 +        let interval_elapsed = self
 +            .status_line_command
 +            .last_requested_at
 +            .is_none_or(|last| now.saturating_duration_since(last) >= refresh_interval);
-+        if !payload_changed && !interval_elapsed {
++        if !interval_elapsed {
 +            if let Some(last) = self.status_line_command.last_requested_at {
 +                self.frame_requester.schedule_frame_in(
 +                    refresh_interval.saturating_sub(now.saturating_duration_since(last)),
@@ -3501,11 +3498,11 @@ index 0000000000000000000000000000000000000000..4ad6f918c3320be9358019c063a56df3
 +            return;
 +        }
 +
++        let payload = self.status_line_command_payload();
 +        let request_id = self.status_line_command.next_request_id;
 +        self.status_line_command.next_request_id = request_id.wrapping_add(/*rhs*/ 1);
 +        self.status_line_command.pending_request_id = Some(request_id);
 +        self.status_line_command.last_requested_at = Some(now);
-+        self.status_line_command.last_payload = Some(payload.clone());
 +        let cwd = self
 +            .current_cwd
 +            .clone()
@@ -3589,7 +3586,13 @@ index 0000000000000000000000000000000000000000..4ad6f918c3320be9358019c063a56df3
 +            std::io::Result::Ok(retained)
 +        };
 +        let (write_result, read_result, wait_result) = tokio::join!(writer, reader, child.wait());
-+        write_result.map_err(|error| error.to_string())?;
++        // A command may intentionally close stdin without consuming the snapshot.
++        // Its exit status still decides whether the captured stdout is usable.
++        if let Err(error) = write_result
++            && error.kind() != std::io::ErrorKind::BrokenPipe
++        {
++            return Err(error.to_string());
++        }
 +        let output = read_result.map_err(|error| error.to_string())?;
 +        let status = wait_result.map_err(|error| error.to_string())?;
 +        if !status.success() {
@@ -3627,25 +3630,23 @@ index 0000000000000000000000000000000000000000..4ad6f918c3320be9358019c063a56df3
 +            }
 +            if chars.next_if_eq(&'[').is_some() {
 +                let mut params = String::new();
++                let mut sgr_safe = true;
 +                while let Some(next) = chars.peek().copied() {
-+                    chars.next();
-+                    if next == 'm' {
-+                        output.push('\u{1b}');
-+                        output.push('[');
-+                        output.push_str(&params);
-+                        output.push('m');
++                    if !('\u{20}'..='\u{7e}').contains(&next) {
 +                        break;
 +                    }
-+                    if next.is_ascii_digit() || next == ';' {
-+                        params.push(next);
-+                    } else {
-+                        while let Some(rest) = chars.peek().copied() {
-+                            chars.next();
-+                            if rest.is_ascii_alphabetic() {
-+                                break;
++                    chars.next();
++                    match next {
++                        '0'..='9' | ';' => params.push(next),
++                        '\u{20}'..='\u{3f}' => sgr_safe = false,
++                        _ => {
++                            if next == 'm' && sgr_safe {
++                                output.push_str("\u{1b}[");
++                                output.push_str(&params);
++                                output.push('m');
 +                            }
++                            break;
 +                        }
-+                        break;
 +                    }
 +                }
 +            }
@@ -3677,10 +3678,10 @@ index 0000000000000000000000000000000000000000..4ad6f918c3320be9358019c063a56df3
 +mod tests;
 diff --git a/codex-rs/tui/src/chatwidget/status_line_command_tests.rs b/codex-rs/tui/src/chatwidget/status_line_command_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..22257dfc584da68aca9a8224e9d1d5119bd6f531
+index 0000000000000000000000000000000000000000..7647304feaecc18ddd249da03b7d3c2f16157de4
 --- /dev/null
 +++ b/codex-rs/tui/src/chatwidget/status_line_command_tests.rs
-@@ -0,0 +1,79 @@
+@@ -0,0 +1,145 @@
 +use super::*;
 +use pretty_assertions::assert_eq;
 +
@@ -3757,6 +3758,72 @@ index 0000000000000000000000000000000000000000..22257dfc584da68aca9a8224e9d1d511
 +    let scheduled = frames.try_recv().expect("idle refresh scheduled");
 +    assert!(scheduled > now + Duration::from_secs(55));
 +    assert!(scheduled < now + Duration::from_secs(61));
++    chat.request_status_line_command_if_due(now + Duration::from_secs(60));
++    assert!(chat.status_line_command.pending_request_id.is_some());
++}
++
++#[test]
++fn sanitizer_preserves_text_after_csi_final_bytes() {
++    for sequence in [
++        "\u{1b}[K",
++        "\u{1b}[H",
++        "\u{1b}[2J",
++        "\u{1b}[?25l",
++        "\u{1b}[1 q",
++        "\u{1b}[0~",
++    ] {
++        assert_eq!(
++            sanitize_status_line(&format!("{sequence} 12 foo")),
++            " 12 foo"
++        );
++    }
++}
++
++#[cfg(unix)]
++#[tokio::test]
++async fn command_can_close_stdin_without_consuming_the_payload() {
++    let mut config = command(&["sh", "-c", "exec 0<&-; printf ready"]);
++    config.timeout_ms = 5_000;
++    let payload = "x".repeat(1024 * 1024);
++    assert_eq!(
++        run_status_line_command(&config, &payload, Path::new("/tmp")).await,
++        Ok(Some(vec!["ready".to_string()]))
++    );
++}
++
++#[cfg(unix)]
++#[tokio::test]
++async fn command_closing_stdin_still_reports_a_failed_exit() {
++    let mut config = command(&["sh", "-c", "exec 0<&-; printf stale; exit 7"]);
++    config.timeout_ms = 5_000;
++    let payload = "x".repeat(1024 * 1024);
++    let result = run_status_line_command(&config, &payload, Path::new("/tmp")).await;
++    assert!(
++        matches!(result, Err(error) if error.contains("exited with")),
++        "nonzero exit must fail"
++    );
++}
++
++#[tokio::test]
++async fn changed_payload_respects_the_refresh_interval() {
++    let (mut chat, _sender, _events, _operations) =
++        crate::chatwidget::tests::make_chatwidget_manual_with_sender().await;
++    let mut config = command(&["sh", "-c", "cat"]);
++    config.refresh_interval_ms = 60_000;
++    chat.config.tui_status_line_command = Some(config);
++    let now = Instant::now();
++    chat.request_status_line_command_if_due(now);
++    let request_id = chat
++        .status_line_command
++        .pending_request_id
++        .expect("request started");
++    assert!(chat.set_status_line_command_output(request_id, Ok(Some(vec!["ready".into()]))));
++    chat.thread_name = Some("Changed session name".into());
++    chat.request_status_line_command_if_due(now + Duration::from_secs(1));
++    assert!(
++        chat.status_line_command.pending_request_id.is_none(),
++        "changed payload must wait for the interval"
++    );
 +    chat.request_status_line_command_if_due(now + Duration::from_secs(60));
 +    assert!(chat.status_line_command.pending_request_id.is_some());
 +}
