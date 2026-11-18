@@ -65,7 +65,9 @@ project is behind, it installs any available package upgrade. It allows 12 hours
 release to build, then exits with an error identifying the blocked release pipeline. A gap of multiple
 versions is reported immediately. `update-health.json` records the last successful freshness check.
 The updater only reports "Already current" when the package also matches or exceeds upstream.
-API rate limits fall back to GitHub's public release redirects.
+API rate limits fall back to GitHub's public release redirects. A freshness warning does not stop the
+installer from configuring a verified package or enabling background updates. The updater exits with
+status 75 for freshness failures and status 1 for installation failures.
 
 Automatic updates trust packages published by this repository; checksums detect damaged downloads,
 but are not an independent signature. Packages are currently neither signed nor notarized.

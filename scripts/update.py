@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import fcntl
 import hashlib
+import http.client
 import json
 import os
 import platform
@@ -24,6 +25,10 @@ from pathlib import Path, PurePosixPath
 REPOSITORY = "GordonBeeming/codex-statusline"
 API = f"https://api.github.com/repos/{REPOSITORY}/releases/latest"
 PLATFORM = "aarch64-apple-darwin"
+
+
+class FreshnessError(ValueError):
+    """The package is valid, but its upstream freshness check failed."""
 
 
 def latest_tag(repository: str) -> str:
@@ -62,6 +67,7 @@ def verify_upstream_freshness(manifest: dict, share: Path) -> bool:
     behind = upstream > version[:3]
     multiple_releases = (
         upstream[:2] > (version[0], version[1] + 1)
+        or (upstream[:2] > version[:2] and upstream[2] > 0)
         or (upstream[:2] == version[:2] and upstream[2] > version[2] + 1)
     )
     blocked = behind and (multiple_releases or now - first_seen >= 12 * 3600)
@@ -84,6 +90,13 @@ def verify_upstream_freshness(manifest: dict, share: Path) -> bool:
         print(f"Latest statusline package installed; waiting for upstream Codex {latest} "
               "to pass the release pipeline (12-hour grace period).", file=sys.stderr)
     return not behind
+
+
+def check_installed_freshness(manifest: dict, share: Path) -> bool:
+    try:
+        return verify_upstream_freshness(manifest, share)
+    except (OSError, ValueError, http.client.HTTPException) as error:
+        raise FreshnessError(str(error)) from error
 
 
 def download(url: str, destination: Path) -> None:
@@ -256,7 +269,7 @@ def update(share: Path, bin_dir: Path) -> None:
                         print("Installed package failed validation; downloading a replacement.")
                     else:
                         activate((share / "current").resolve(), share, bin_dir)
-                        if verify_upstream_freshness(manifest, share):
+                        if check_installed_freshness(manifest, share):
                             print(f"Already current: {installed['version']}")
                         return
                 candidate_version = cli_version_components(manifest.get("cli_version"))
@@ -268,7 +281,7 @@ def update(share: Path, bin_dir: Path) -> None:
             archive = Path(temporary) / "package.tar.gz"
             download(assets[f"codex-statusline-{PLATFORM}.tar.gz"], archive)
             install_archive(archive, manifest, share, bin_dir)
-            verify_upstream_freshness(manifest, share)
+            check_installed_freshness(manifest, share)
 
 
 def main() -> None:
@@ -280,6 +293,8 @@ def main() -> None:
         parser.error("Python 3.12 or newer is required for safe archive extraction")
     try:
         update(args.share_root.expanduser().absolute(), args.bin_dir.expanduser().absolute())
+    except FreshnessError as error:
+        parser.exit(75, f"Verified package retained; freshness check failed: {error}\n")
     except (OSError, ValueError, KeyError, subprocess.SubprocessError, tarfile.TarError) as error:
         parser.exit(1, f"Update check failed: {error}\n")
 

@@ -155,6 +155,30 @@ class UpdateTests(unittest.TestCase):
                 updater.verify_upstream_freshness(self.manifest, self.share)
         self.assertEqual(json.loads((self.share / "update-health.json").read_text())["status"], "blocked")
 
+    def test_patch_releases_after_a_minor_bump_do_not_restart_the_grace_period(self):
+        with patch.object(updater, "latest_upstream_version", return_value=(0, 160, 0)), \
+             patch.object(updater.time, "time", return_value=100_000):
+            self.assertFalse(updater.verify_upstream_freshness(self.manifest, self.share))
+        with patch.object(updater, "latest_upstream_version", return_value=(0, 160, 1)), \
+             patch.object(updater.time, "time", return_value=100_001):
+            with self.assertRaisesRegex(ValueError, "release pipeline"):
+                updater.verify_upstream_freshness(self.manifest, self.share)
+
+    def test_freshness_network_failure_is_distinct_from_package_failure(self):
+        with patch.object(updater, "latest_upstream_version", side_effect=OSError("offline")):
+            with self.assertRaisesRegex(updater.FreshnessError, "offline"):
+                updater.check_installed_freshness(self.manifest, self.share)
+        with patch.object(updater, "latest_upstream_version", side_effect=updater.http.client.IncompleteRead(b"")):
+            with self.assertRaises(updater.FreshnessError):
+                updater.check_installed_freshness(self.manifest, self.share)
+        for error, expected in [(updater.FreshnessError("offline"), 75), (OSError("package failed"), 1)]:
+            with patch.object(updater, "update", side_effect=error), \
+                 patch.object(updater.sys, "argv", ["update.py"]), \
+                 contextlib.redirect_stderr(io.StringIO()):
+                with self.assertRaises(SystemExit) as result:
+                    updater.main()
+            self.assertEqual(result.exception.code, expected)
+
     def test_success_switches_current_and_keeps_previous(self):
         self.package()
         self.install()
