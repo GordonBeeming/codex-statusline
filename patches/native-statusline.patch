@@ -16,7 +16,7 @@ diff --git a/codex-rs/config/src/loader/mod.rs b/codex-rs/config/src/loader/mod.
 diff --git a/codex-rs/config/src/types.rs b/codex-rs/config/src/types.rs
 --- a/codex-rs/config/src/types.rs
 +++ b/codex-rs/config/src/types.rs
-@@ -870,6 +870,38 @@
+@@ -880,6 +880,38 @@
      }
  }
  
@@ -55,7 +55,7 @@ diff --git a/codex-rs/config/src/types.rs b/codex-rs/config/src/types.rs
  /// Collection of settings that are specific to the TUI.
  #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default, JsonSchema)]
  #[schemars(deny_unknown_fields)]
-@@ -986,6 +1018,13 @@
+@@ -996,6 +1028,13 @@
      /// When unset, the TUI defaults to: `model-with-reasoning`, `current-dir`, and `thread-name`.
      #[serde(default)]
      pub status_line: Option<Vec<String>>,
@@ -72,7 +72,7 @@ diff --git a/codex-rs/config/src/types.rs b/codex-rs/config/src/types.rs
 diff --git a/codex-rs/core/config.schema.json b/codex-rs/core/config.schema.json
 --- a/codex-rs/core/config.schema.json
 +++ b/codex-rs/core/config.schema.json
-@@ -5653,6 +5653,15 @@
+@@ -5673,6 +5673,15 @@
              "type": "string"
            },
            "type": "array"
@@ -88,7 +88,7 @@ diff --git a/codex-rs/core/config.schema.json b/codex-rs/core/config.schema.json
          },
          "status_line_use_colors": {
            "default": true,
-@@ -6972,6 +6981,44 @@
+@@ -6992,6 +7001,44 @@
        },
        "type": "object"
      },
@@ -144,7 +144,7 @@ diff --git a/codex-rs/core/src/config/mod.rs b/codex-rs/core/src/config/mod.rs
  use codex_config::types::UriBasedFileOpener;
  use codex_config::types::WindowsSandboxModeToml;
  use codex_core_plugins::PluginLoadOutcome;
-@@ -890,6 +891,9 @@
+@@ -877,6 +878,9 @@
      ///
      /// When unset, the TUI defaults to: `model-with-reasoning` and `current-dir`.
      pub tui_status_line: Option<Vec<String>>,
@@ -154,7 +154,7 @@ diff --git a/codex-rs/core/src/config/mod.rs b/codex-rs/core/src/config/mod.rs
  
      /// Whether to color status line items with colors from the active syntax theme.
      pub tui_status_line_use_colors: bool,
-@@ -4850,6 +4854,10 @@
+@@ -4838,6 +4842,10 @@
                  .map(|t| t.alternate_screen)
                  .unwrap_or_default(),
              tui_status_line: cfg.tui.as_ref().and_then(|t| t.status_line.clone()),
@@ -195,7 +195,7 @@ diff --git a/codex-rs/tui/src/app/background_requests.rs b/codex-rs/tui/src/app/
 diff --git a/codex-rs/tui/src/app/event_dispatch.rs b/codex-rs/tui/src/app/event_dispatch.rs
 --- a/codex-rs/tui/src/app/event_dispatch.rs
 +++ b/codex-rs/tui/src/app/event_dispatch.rs
-@@ -2059,6 +2059,14 @@
+@@ -2080,6 +2080,14 @@
              AppEvent::RefreshStatusLineWorkspaceHeadline { request_id } => {
                  self.refresh_status_line_workspace_headline(app_server, request_id);
              }
@@ -210,7 +210,7 @@ diff --git a/codex-rs/tui/src/app/event_dispatch.rs b/codex-rs/tui/src/app/event
              AppEvent::OpenThreadGoalMenu { thread_id } => {
                  self.open_thread_goal_menu(app_server, thread_id).await;
              }
-@@ -3739,6 +3747,14 @@
+@@ -3784,6 +3792,14 @@
                  if self
                      .chat_widget
                      .set_status_line_workspace_headline(request_id, result)
@@ -236,7 +236,7 @@ diff --git a/codex-rs/tui/src/app_event.rs b/codex-rs/tui/src/app_event.rs
  use codex_features::Feature;
  use codex_plugin::PluginCapabilitySummary;
  use codex_protocol::config_types::CollaborationModeMask;
-@@ -977,6 +978,14 @@
+@@ -980,6 +981,14 @@
          request_id: u64,
      },
  
@@ -251,7 +251,7 @@ diff --git a/codex-rs/tui/src/app_event.rs b/codex-rs/tui/src/app_event.rs
      /// Commit settled asynchronous usage output after active-output barriers clear.
      CommitPendingUsageOutput,
  
-@@ -1828,6 +1837,11 @@
+@@ -1838,6 +1847,11 @@
          request_id: u64,
          result: Result<crate::workspace_messages::WorkspaceHeadlineFetchResult, String>,
      },
@@ -266,10 +266,10 @@ diff --git a/codex-rs/tui/src/app_event.rs b/codex-rs/tui/src/app_event.rs
 diff --git a/codex-rs/tui/src/bottom_pane/chat_composer.rs b/codex-rs/tui/src/bottom_pane/chat_composer.rs
 --- a/codex-rs/tui/src/bottom_pane/chat_composer.rs
 +++ b/codex-rs/tui/src/bottom_pane/chat_composer.rs
-@@ -910,7 +910,10 @@
+@@ -909,7 +909,10 @@
              self.effort_ignition = Some(EffortIgnition::new(tier, style));
              self.effort_animation_style = Some(style);
-             if let Some(previous) = self.status_surface_content()
+             if let Some(previous) = self.status_surface_content(StatusLineFocus::Focused)
 -                && !matches!(previous.as_ref(), FooterContent::Extension { .. })
 +                && !matches!(
 +                    previous.as_ref(),
@@ -281,24 +281,29 @@ diff --git a/codex-rs/tui/src/bottom_pane/chat_composer.rs b/codex-rs/tui/src/bo
 diff --git a/codex-rs/tui/src/bottom_pane/chat_composer/composer_layout.rs b/codex-rs/tui/src/bottom_pane/chat_composer/composer_layout.rs
 --- a/codex-rs/tui/src/bottom_pane/chat_composer/composer_layout.rs
 +++ b/codex-rs/tui/src/bottom_pane/chat_composer/composer_layout.rs
-@@ -241,7 +241,12 @@
-         let mut available = height
-             .saturating_sub(input_height)
-             .max(u16::from(editing_hint && height > 3));
--        let cap = if options.separate_status_line {
-+        let cap = if matches!(
+@@ -291,11 +291,17 @@
+         let find_active = options
+             .footer
+             .is_some_and(|footer| footer.cursor_column.is_some());
+-        let footer = FooterLayout::new(
++        let mut footer = FooterLayout::new(
+             workspace_height,
+             self.footer_hint_height(width, options),
+             /*priority_hint_rows*/ if find_active { 2 } else { 1 },
+         );
++        if matches!(
 +            self.footer.status_line_value,
 +            Some(FooterContent::Command(_))
 +        ) {
-+            available
-+        } else if options.separate_status_line {
-             // Use the frame's budget so measurement and painting choose the same cap.
-             let budget = options.max_height.unwrap_or(u16::MAX);
-             (budget.saturating_add(2) / 4).clamp(2, MAX_FOOTER_ROWS)
++            footer.cap = available;
++        }
+         let wanted_status =
+             self.status_surface_height(width, footer.status_budget(available), options);
+         let basic = (footer.reserved_hints + wanted_status.min(1)).min(2);
 diff --git a/codex-rs/tui/src/bottom_pane/chat_composer/status_surface.rs b/codex-rs/tui/src/bottom_pane/chat_composer/status_surface.rs
 --- a/codex-rs/tui/src/bottom_pane/chat_composer/status_surface.rs
 +++ b/codex-rs/tui/src/bottom_pane/chat_composer/status_surface.rs
-@@ -11,7 +11,10 @@
+@@ -12,7 +12,10 @@
          if self.footer.status_line_value == status_line {
              return false;
          }
@@ -309,20 +314,8 @@ diff --git a/codex-rs/tui/src/bottom_pane/chat_composer/status_surface.rs b/code
 +        ) {
              self.effort_status_line_transition = None;
          }
-         self.footer.measured_status_line.set(None);
-@@ -56,6 +59,11 @@
-             return 0;
-         }
-         match status.as_deref() {
-+            Some(FooterContent::Command(line)) => {
-+                u16::try_from(line.layout(usize::from(bounds.width)).len())
-+                    .unwrap_or(u16::MAX)
-+                    .min(bounds.height)
-+            }
-             Some(FooterContent::Extension { content }) => {
-                 let cache = &self.footer.measured_status_line;
-                 if let Some((previous, height)) = cache.get()
-@@ -93,8 +101,10 @@
+         self.footer.status_layout = Default::default();
+@@ -74,8 +77,10 @@
              return None;
          }
          let status = self.footer.status_line_value.as_ref();
@@ -332,20 +325,20 @@ diff --git a/codex-rs/tui/src/bottom_pane/chat_composer/status_surface.rs b/code
 +            status,
 +            Some(FooterContent::Extension { .. } | FooterContent::Command(_))
 +        ) || self.footer.active_agent_label.is_none()
+             || focus == StatusLineFocus::Unfocused
          {
              return status.map(Cow::Borrowed);
-         }
 diff --git a/codex-rs/tui/src/bottom_pane/chat_composer/status_surface_tests.rs b/codex-rs/tui/src/bottom_pane/chat_composer/status_surface_tests.rs
 --- a/codex-rs/tui/src/bottom_pane/chat_composer/status_surface_tests.rs
 +++ b/codex-rs/tui/src/bottom_pane/chat_composer/status_surface_tests.rs
-@@ -1204,3 +1204,56 @@
+@@ -1215,3 +1215,56 @@
      }
      insta::assert_snapshot!(snapshots.join("\n---\n"));
  }
 +
 +#[test]
 +fn multiline_status_command_preserves_rows_styles_and_frame_bounds() {
-+    use crate::bottom_pane::status_line::StatusLine;
++    use crate::bottom_pane::command_status_line::CommandStatusLine;
 +    use ratatui::style::Color;
 +    use ratatui::text::Span;
 +
@@ -361,7 +354,7 @@ diff --git a/codex-rs/tui/src/bottom_pane/chat_composer/status_surface_tests.rs 
 +                })
 +                .collect();
 +            composer.set_status_line(Some(FooterContent::Command(
-+                StatusLine::from_fixed_rows(rows).unwrap(),
++                CommandStatusLine::from_fixed_rows(rows).unwrap(),
 +            )));
 +            composer.set_active_agent_label(Some("agent".into()));
 +            composer.set_active_reasoning_effort(
@@ -395,92 +388,10 @@ diff --git a/codex-rs/tui/src/bottom_pane/chat_composer/status_surface_tests.rs 
 +        }
 +    }
 +}
-diff --git a/codex-rs/tui/src/bottom_pane/footer.rs b/codex-rs/tui/src/bottom_pane/footer.rs
---- a/codex-rs/tui/src/bottom_pane/footer.rs
-+++ b/codex-rs/tui/src/bottom_pane/footer.rs
-@@ -816,7 +816,9 @@
-     let mut line = match status {
-         Some(FooterContent::Line(line)) => HyperlinkLine::from(line.clone()),
-         Some(FooterContent::HyperlinkLine(line)) => line.clone(),
--        Some(content @ FooterContent::Extension { .. }) => return Some(content.clone()),
-+        Some(content @ (FooterContent::Extension { .. } | FooterContent::Command(_))) => {
-+            return Some(content.clone());
-+        }
-         None => HyperlinkLine::default(),
-     };
-     let suffix = passive_footer_suffix(props, status.is_some());
-diff --git a/codex-rs/tui/src/bottom_pane/footer/footer_content.rs b/codex-rs/tui/src/bottom_pane/footer/footer_content.rs
---- a/codex-rs/tui/src/bottom_pane/footer/footer_content.rs
-+++ b/codex-rs/tui/src/bottom_pane/footer/footer_content.rs
-@@ -16,6 +16,7 @@
- #[derive(Clone, Debug, PartialEq)]
- pub(crate) enum FooterContent {
-     Line(Line<'static>),
-+    Command(super::super::status_line::StatusLine),
-     HyperlinkLine(HyperlinkLine),
-     Extension { content: Arc<PreparedUiTree> },
- }
-@@ -33,7 +34,7 @@
-         match self {
-             Self::Line(line) => Some((line, &[])),
-             Self::HyperlinkLine(line) => Some((&line.line, &line.hyperlinks)),
--            Self::Extension { .. } => None,
-+            Self::Extension { .. } | Self::Command(_) => None,
-         }
-     }
- 
-@@ -41,6 +42,7 @@
-     pub(crate) fn width(&self) -> u16 {
-         let width = match self {
-             Self::Line(line) => line_width(line),
-+            Self::Command(line) => line_width(&line.to_line()),
-             Self::HyperlinkLine(line) => line.width(),
-             Self::Extension { content } => return content.measure_natural().width,
-         };
-@@ -50,6 +52,20 @@
-     /// Paint only inside the final area supplied by the parent.
-     pub(crate) fn render(self, area: Rect, buf: &mut Buffer) {
-         match self {
-+            Self::Command(line) => {
-+                use ratatui::widgets::Widget;
-+                for (offset, row) in line
-+                    .layout(usize::from(area.width))
-+                    .into_iter()
-+                    .take(usize::from(area.height))
-+                    .enumerate()
-+                {
-+                    row.render(
-+                        Rect::new(area.x, area.y + offset as u16, area.width, 1),
-+                        buf,
-+                    );
-+                }
-+            }
-             Self::Extension { content } => {
-                 with_syntax_theme(|theme| content.render(area, theme, buf));
-             }
-@@ -72,6 +88,7 @@
-     pub(crate) fn into_hyperlink_line(self) -> HyperlinkLine {
-         match self {
-             Self::Line(line) => line.into(),
-+            Self::Command(line) => line.to_line().into(),
-             Self::HyperlinkLine(line) => line,
-             Self::Extension { content } => {
-                 with_syntax_theme(|theme| content.render_line(u16::MAX, theme))
-diff --git a/codex-rs/tui/src/bottom_pane/mod.rs b/codex-rs/tui/src/bottom_pane/mod.rs
---- a/codex-rs/tui/src/bottom_pane/mod.rs
-+++ b/codex-rs/tui/src/bottom_pane/mod.rs
-@@ -120,6 +120,7 @@
- pub(crate) use async_questions::QuestionState;
- pub(crate) use async_questions::QuestionSubmission;
- pub(crate) use footer::footer_content;
-+pub(crate) mod status_line;
- pub(crate) use mcp_server_elicitation::McpServerElicitationFormRequest;
- pub(crate) use mcp_server_elicitation::McpServerElicitationOverlay;
- pub(crate) use request_user_input::RequestUserInputOverlay;
-diff --git a/codex-rs/tui/src/bottom_pane/status_line.rs b/codex-rs/tui/src/bottom_pane/status_line.rs
+diff --git a/codex-rs/tui/src/bottom_pane/command_status_line.rs b/codex-rs/tui/src/bottom_pane/command_status_line.rs
 new file mode 100644
 --- /dev/null
-+++ b/codex-rs/tui/src/bottom_pane/status_line.rs
++++ b/codex-rs/tui/src/bottom_pane/command_status_line.rs
 @@ -0,0 +1,79 @@
 +//! Command rows stay distinct while wrapping within the native footer viewport.
 +
@@ -492,11 +403,11 @@ new file mode 100644
 +use crate::width::display_width;
 +
 +#[derive(Clone, Debug, Eq, PartialEq)]
-+pub(crate) struct StatusLine {
++pub(crate) struct CommandStatusLine {
 +    rows: Vec<Line<'static>>,
 +}
 +
-+impl StatusLine {
++impl CommandStatusLine {
 +    pub(crate) fn from_fixed_rows(rows: Vec<Line<'static>>) -> Option<Self> {
 +        let rows = rows
 +            .into_iter()
@@ -559,12 +470,12 @@ new file mode 100644
 +}
 +
 +#[cfg(test)]
-+#[path = "status_line_tests.rs"]
++#[path = "command_status_line_tests.rs"]
 +mod tests;
-diff --git a/codex-rs/tui/src/bottom_pane/status_line_tests.rs b/codex-rs/tui/src/bottom_pane/status_line_tests.rs
+diff --git a/codex-rs/tui/src/bottom_pane/command_status_line_tests.rs b/codex-rs/tui/src/bottom_pane/command_status_line_tests.rs
 new file mode 100644
 --- /dev/null
-+++ b/codex-rs/tui/src/bottom_pane/status_line_tests.rs
++++ b/codex-rs/tui/src/bottom_pane/command_status_line_tests.rs
 @@ -0,0 +1,46 @@
 +use super::*;
 +use ratatui::style::Color;
@@ -573,7 +484,7 @@ new file mode 100644
 +
 +#[test]
 +fn command_status_line_keeps_source_rows_at_wide_and_narrow_widths() {
-+    let line = StatusLine::from_fixed_rows(vec!["first".into(), "second".into()]).unwrap();
++    let line = CommandStatusLine::from_fixed_rows(vec!["first".into(), "second".into()]).unwrap();
 +    let text = |width| {
 +        line.layout(width)
 +            .iter()
@@ -587,7 +498,7 @@ new file mode 100644
 +
 +#[test]
 +fn command_status_line_preserves_styles_and_unicode_graphemes_when_wrapping() {
-+    let line = StatusLine::from_fixed_rows(vec![
++    let line = CommandStatusLine::from_fixed_rows(vec![
 +        Line::from(vec![
 +            Span::styled("A👩‍💻", Style::default().fg(Color::Green)),
 +            Span::styled("e\u{301}B", Style::default().add_modifier(Modifier::BOLD)),
@@ -607,15 +518,102 @@ new file mode 100644
 +
 +#[test]
 +fn command_status_line_handles_empty_output_and_zero_width() {
-+    assert!(StatusLine::from_fixed_rows(vec![]).is_none());
-+    assert!(StatusLine::from_fixed_rows(vec![Line::default()]).is_none());
-+    let line = StatusLine::from_fixed_rows(vec!["ready".into()]).unwrap();
++    assert!(CommandStatusLine::from_fixed_rows(vec![]).is_none());
++    assert!(CommandStatusLine::from_fixed_rows(vec![Line::default()]).is_none());
++    let line = CommandStatusLine::from_fixed_rows(vec!["ready".into()]).unwrap();
 +    assert!(line.layout(0).is_empty());
 +}
+diff --git a/codex-rs/tui/src/bottom_pane/footer.rs b/codex-rs/tui/src/bottom_pane/footer.rs
+--- a/codex-rs/tui/src/bottom_pane/footer.rs
++++ b/codex-rs/tui/src/bottom_pane/footer.rs
+@@ -806,7 +806,9 @@
+         .filter(|_| props.status_line_enabled);
+     let mut line = match status {
+         Some(FooterContent::HyperlinkLine(line)) => line.as_ref().clone(),
+-        Some(content @ FooterContent::Extension { .. }) => return Some(content.clone()),
++        Some(content @ (FooterContent::Extension { .. } | FooterContent::Command(_))) => {
++            return Some(content.clone());
++        }
+         None => HyperlinkLine::default(),
+     };
+     let suffix = passive_footer_suffix(props, status.is_some());
+diff --git a/codex-rs/tui/src/bottom_pane/footer/footer_content.rs b/codex-rs/tui/src/bottom_pane/footer/footer_content.rs
+--- a/codex-rs/tui/src/bottom_pane/footer/footer_content.rs
++++ b/codex-rs/tui/src/bottom_pane/footer/footer_content.rs
+@@ -22,6 +22,7 @@
+ /// Owned status content displayed below the composer.
+ #[derive(Clone, Debug, PartialEq)]
+ pub(crate) enum FooterContent {
++    Command(super::super::command_status_line::CommandStatusLine),
+     HyperlinkLine(Box<HyperlinkLine>),
+     Extension { content: Arc<PreparedUiTree> },
+ }
+@@ -39,6 +40,7 @@
+     pub(crate) fn width(&self) -> u16 {
+         let width = match self {
+             Self::HyperlinkLine(line) => line.width(),
++            Self::Command(line) => crate::line_truncation::line_width(&line.to_line()),
+             Self::Extension { content } => return content.measure_natural().width,
+         };
+         u16::try_from(width).unwrap_or(u16::MAX)
+@@ -56,6 +58,19 @@
+         focus: StatusLineFocus,
+     ) {
+         match self {
++            Self::Command(line) => {
++                let rows = line.layout(usize::from(area.width));
++                let height = usize::from(area.height);
++                for (offset, row) in rows.iter().take(height).enumerate() {
++                    render_status_row(
++                        &row.clone().into(),
++                        Rect::new(area.x, area.y + offset as u16, area.width, 1),
++                        buf,
++                        focus,
++                        offset + 1 == height && rows.len() > height,
++                    );
++                }
++            }
+             Self::Extension { content } => {
+                 let plain_style =
+                     (focus == StatusLineFocus::Unfocused).then(|| Style::reset().dim());
+@@ -77,6 +92,7 @@
+     pub(crate) fn into_hyperlink_line(self) -> HyperlinkLine {
+         match self {
+             Self::HyperlinkLine(line) => *line,
++            Self::Command(line) => line.to_line().into(),
+             Self::Extension { content } => {
+                 with_syntax_theme(|theme| content.render_line(u16::MAX, theme))
+             }
+diff --git a/codex-rs/tui/src/bottom_pane/mod.rs b/codex-rs/tui/src/bottom_pane/mod.rs
+--- a/codex-rs/tui/src/bottom_pane/mod.rs
++++ b/codex-rs/tui/src/bottom_pane/mod.rs
+@@ -89,6 +89,7 @@
+ mod multi_select_picker;
+ pub(crate) use multi_select_picker::MultiSelectItem;
+ pub(crate) use multi_select_picker::MultiSelectPicker;
++pub(crate) mod command_status_line;
+ #[cfg(test)]
+ #[path = "questions_tests.rs"]
+ mod question_tests;
+diff --git a/codex-rs/tui/src/bottom_pane/status_line.rs b/codex-rs/tui/src/bottom_pane/status_line.rs
+--- a/codex-rs/tui/src/bottom_pane/status_line.rs
++++ b/codex-rs/tui/src/bottom_pane/status_line.rs
+@@ -44,6 +44,11 @@
+             return 0;
+         }
+         match content {
++            Some(FooterContent::Command(line)) => {
++                u16::try_from(line.layout(usize::from(bounds.width)).len())
++                    .unwrap_or(u16::MAX)
++                    .min(bounds.height)
++            }
+             Some(FooterContent::Extension { content }) => {
+                 if let Some((previous, height)) = self.measured_extension.get()
+                     && previous == bounds
 diff --git a/codex-rs/tui/src/chatwidget.rs b/codex-rs/tui/src/chatwidget.rs
 --- a/codex-rs/tui/src/chatwidget.rs
 +++ b/codex-rs/tui/src/chatwidget.rs
-@@ -396,6 +396,7 @@
+@@ -398,6 +398,7 @@
  use self::status_state::StatusState;
  use self::status_state::TerminalTitleStatusKind;
  mod status_controls;
@@ -623,7 +621,7 @@ diff --git a/codex-rs/tui/src/chatwidget.rs b/codex-rs/tui/src/chatwidget.rs
  mod status_surface_commands;
  mod status_surfaces;
  use self::status_surface_commands::StatusSurfaceOverrides;
-@@ -789,6 +790,8 @@
+@@ -793,6 +794,8 @@
      status_line_workspace_headline_last_requested_at: Option<Instant>,
      // Set after the backend reports the workspace-message feature gate is disabled.
      status_line_workspace_messages_disabled: bool,
@@ -632,7 +630,7 @@ diff --git a/codex-rs/tui/src/chatwidget.rs b/codex-rs/tui/src/chatwidget.rs
      // Cached backend-estimated cost and bounded refresh state for the current thread.
      thread_usage: thread_usage::ThreadUsageState,
      // Current thread-goal status shown in the status line when plan mode is inactive.
-@@ -1230,6 +1233,7 @@
+@@ -1234,6 +1237,7 @@
              self.refresh_terminal_title();
          }
          self.refresh_status_line_if_workspace_headline_due();
@@ -643,7 +641,7 @@ diff --git a/codex-rs/tui/src/chatwidget.rs b/codex-rs/tui/src/chatwidget.rs
 diff --git a/codex-rs/tui/src/chatwidget/constructor.rs b/codex-rs/tui/src/chatwidget/constructor.rs
 --- a/codex-rs/tui/src/chatwidget/constructor.rs
 +++ b/codex-rs/tui/src/chatwidget/constructor.rs
-@@ -296,6 +296,7 @@
+@@ -297,6 +297,7 @@
              next_status_line_workspace_headline_request_id: 0,
              status_line_workspace_headline_last_requested_at: None,
              status_line_workspace_messages_disabled: false,
@@ -1182,7 +1180,7 @@ diff --git a/codex-rs/tui/src/chatwidget/status_surfaces.rs b/codex-rs/tui/src/c
  //! behavior easier to review without paging through the rest of `chatwidget.rs`.
  
  use super::*;
-+use crate::bottom_pane::status_line::StatusLine;
++use crate::bottom_pane::command_status_line::CommandStatusLine;
  use crate::bottom_pane::status_line_from_segments;
  use crate::branch_summary;
  use crate::chatwidget::limit_label_for_window;
@@ -1194,13 +1192,15 @@ diff --git a/codex-rs/tui/src/chatwidget/status_surfaces.rs b/codex-rs/tui/src/c
  use codex_app_server_protocol::AskForApproval;
  use codex_config::ConfigLayerSource;
  use codex_config::os_host_name;
-@@ -202,10 +204,20 @@
+@@ -202,10 +204,22 @@
      }
  
      fn refresh_status_line_from_selections(&mut self, selections: &StatusSurfaceSelections) {
 -        let enabled = !selections.status_line_items.is_empty();
 +        let command_status_line = self.status_line_command.output.as_ref().and_then(|lines| {
-+            StatusLine::from_fixed_rows(lines.iter().map(|line| ansi_escape_line(line)).collect())
++            CommandStatusLine::from_fixed_rows(
++                lines.iter().map(|line| ansi_escape_line(line)).collect(),
++            )
 +        });
 +        let enabled = command_status_line.is_some() || !selections.status_line_items.is_empty();
          self.bottom_pane.set_status_line_enabled(enabled);
@@ -1216,7 +1216,7 @@ diff --git a/codex-rs/tui/src/chatwidget/status_surfaces.rs b/codex-rs/tui/src/c
              return;
          }
  
-@@ -298,6 +310,7 @@
+@@ -298,6 +312,7 @@
      pub(crate) fn refresh_status_surfaces(&mut self) {
          self.bottom_pane
              .set_luna_reserve_active(self.current_model() == LUNA_RESERVE_MODEL);
