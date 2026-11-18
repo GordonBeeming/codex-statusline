@@ -56,6 +56,8 @@ def main() -> None:
         "ProgramArguments": [sys.executable, str(updater), "--share-root", str(share), "--bin-dir", str(bin_dir)],
         "StartInterval": 21600,
         "RunAtLoad": True,
+        "KeepAlive": {"SuccessfulExit": False},
+        "ThrottleInterval": 900,
         "ProcessType": "Background",
         "EnvironmentVariables": {"PATH": environment_path},
         "StandardOutPath": str(share / "update.log"),

@@ -25,8 +25,14 @@ fi
 if [[ "$from_source" == 1 ]]; then
   "$repo_root/scripts/build-native.sh"
 else
-  "$python_bin" "$repo_root/scripts/update.py" --share-root "$share_root" \
-    --bin-dir "${CODEX_STATUSLINE_BIN_DIR:-${HOME}/.local/bin}"
+  if "$python_bin" "$repo_root/scripts/update.py" --share-root "$share_root" \
+    --bin-dir "${CODEX_STATUSLINE_BIN_DIR:-${HOME}/.local/bin}"; then
+    :
+  else
+    update_status=$?
+    # A verified package can be configured even if its freshness check failed.
+    if [[ "$update_status" != 75 ]]; then exit "$update_status"; fi
+  fi
 fi
 "$python_bin" "$repo_root/scripts/configure.py" \
   --renderer "$share_root/current/renderer/statusline.sh"

@@ -42,8 +42,10 @@ On Apple Silicon macOS, install Python 3.12+ and `jq`, clone this repository, th
 
 The installer downloads the latest tested public package, verifies its SHA-256 checksum and CLI
 version, and configures the renderer. The optional `--auto-update` flag installs a user LaunchAgent
-that checks every six hours and at login. Updates take effect in new CLI sessions; running sessions
-continue using their current binary. Downloads and failed checks leave the installed release intact.
+that checks every six hours and at login, retrying failed checks after 15 minutes. Updates take effect
+in new CLI sessions; running sessions continue using their current binary. Failed downloads and
+package validation leave the installed release intact. To apply the retry schedule to an existing
+installation, run `python3 scripts/auto-update.py enable`.
 
 To update immediately or disable background checks:
 
@@ -57,6 +59,16 @@ symlink records the preceding installation. The official `codex` command remains
 Older packages are retained so you can launch `previous/bin/codex` from the share directory for
 rollback. Remove unused release directories when you no longer need them; never remove `current`
 or a package still used by a running session. Each release also carries the updater for future checks.
+
+The updater checks the latest stable upstream version as well as the latest project package. If the
+project is behind, it installs any available package upgrade. It allows 12 hours for one new upstream
+release to build, then exits with an error identifying the blocked release pipeline. A gap of multiple
+versions is reported immediately. `update-health.json` records the last successful freshness check.
+The updater only reports "Already current" when the package also matches or exceeds upstream.
+API rate limits fall back to GitHub's public release redirects. A freshness warning does not stop the
+installer from configuring a verified package or enabling background updates. The updater exits with
+status 75 for freshness failures and status 1 for installation failures.
+
 Automatic updates trust packages published by this repository; checksums detect damaged downloads,
 but are not an independent signature. Packages are currently neither signed nor notarized.
 
@@ -177,8 +189,10 @@ checks expect debug-only commands. Published packages still use the optimized re
 
 When an upstream change conflicts with the patch or fails its tests, the workflow fails and retains
 the last public release. A maintainer must port the patch, update its checksum and baseline lock,
-and push the fix before updates resume. Enable GitHub Actions failure notifications to catch these
-breaks. Automation cannot guarantee compatibility with arbitrary upstream source changes.
+and publish the fix before updates resume. A failed build or publish opens one tracking issue assigned
+to the repository owner; subsequent failures update that issue. A successful release check closes it.
+The command renderer uses a separate footer content variant so native status layout and its tests stay
+upstream-owned. Compatibility still needs validation when upstream changes the integration points.
 
 Scheduled workflows run from the default branch, so changes to the automation must be merged there
 before public updates start. GitHub may disable schedules after 60 days without repository activity;

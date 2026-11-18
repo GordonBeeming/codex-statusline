@@ -99,3 +99,50 @@ jobs:
           fi
           gh release upload "$TAG" dist/* --clobber
           gh release edit "$TAG" --draft=false --latest
+
+  release-health:
+    needs: [build, publish]
+    if: always() && (needs.build.result != 'cancelled')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Track blocked releases
+        uses: actions/github-script@v7
+        env:
+          BUILD_RESULT: ${{ needs.build.result }}
+          PUBLISH_RESULT: ${{ needs.publish.result }}
+          CANDIDATE: ${{ needs.build.outputs.tag }}
+        with:
+          script: |
+            const title = 'Codex release pipeline is blocked';
+            const { owner, repo } = context.repo;
+            const issues = await github.paginate(github.rest.issues.listForRepo, {
+              owner, repo, state: 'open', creator: 'github-actions[bot]', per_page: 100,
+            });
+            const existing = issues.find(issue => !issue.pull_request && issue.title === title);
+            const failed = [process.env.BUILD_RESULT, process.env.PUBLISH_RESULT].includes('failure');
+            if (failed) {
+              const run = `${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`;
+              const body = [
+                'The release pipeline failed. Automatic installs retain the last working package, so users can fall behind upstream until this is repaired.',
+                '',
+                `Candidate: ${process.env.CANDIDATE || 'not resolved'}`,
+                `Build: ${process.env.BUILD_RESULT}; publish: ${process.env.PUBLISH_RESULT}.`,
+                `Failing run: ${run}`,
+                '',
+                'Check the failed step, repair compatibility, and verify a new public package before closing this issue. A successful release check closes it automatically.',
+              ].join('\n');
+              if (existing) {
+                await github.rest.issues.update({ owner, repo, issue_number: existing.number, body });
+              } else {
+                await github.rest.issues.create({ owner, repo, title, body, assignees: [owner] });
+              }
+              core.setFailed(`Release pipeline blocked: ${run}`);
+            } else if (process.env.BUILD_RESULT === 'success' &&
+                       ['success', 'skipped'].includes(process.env.PUBLISH_RESULT) && existing) {
+              await github.rest.issues.update({
+                owner, repo, issue_number: existing.number, state: 'closed', state_reason: 'completed',
+              });
+            }
