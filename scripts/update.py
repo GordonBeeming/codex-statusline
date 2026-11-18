@@ -14,6 +14,9 @@ import sys
 import uuid
 import tarfile
 import tempfile
+import time
+import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path, PurePosixPath
 
@@ -21,6 +24,66 @@ from pathlib import Path, PurePosixPath
 REPOSITORY = "GordonBeeming/codex-statusline"
 API = f"https://api.github.com/repos/{REPOSITORY}/releases/latest"
 PLATFORM = "aarch64-apple-darwin"
+
+
+def latest_tag(repository: str) -> str:
+    request = urllib.request.Request(
+        f"https://github.com/{repository}/releases/latest",
+        headers={"User-Agent": "codex-statusline-updater"}, method="HEAD",
+    )
+    with urllib.request.urlopen(request, timeout=30) as response:
+        resolved = response.geturl()
+    prefix = f"https://github.com/{repository}/releases/tag/"
+    if not resolved.startswith(prefix):
+        raise ValueError(f"Unexpected latest release URL for {repository}")
+    return urllib.parse.unquote(resolved.removeprefix(prefix))
+
+
+def latest_upstream_version() -> tuple[int, ...]:
+    tag = latest_tag("openai/codex")
+    match = re.fullmatch(r"rust-v(\d+)\.(\d+)\.(\d+)", tag)
+    if match is None:
+        raise ValueError(f"Unexpected upstream release tag: {tag}")
+    return tuple(int(part) for part in match.groups())
+
+
+def verify_upstream_freshness(manifest: dict, share: Path) -> bool:
+    version = cli_version_components(manifest.get("cli_version"))
+    if version is None:
+        raise ValueError("Invalid CLI version")
+    upstream = latest_upstream_version()
+    latest = ".".join(map(str, upstream))
+    now = time.time()
+    health_file = share / "update-health.json"
+    previous = installed_manifest(health_file) or {}
+    first_seen = previous.get("first_seen", now) if previous.get("upstream_version") == latest else now
+    if not isinstance(first_seen, (int, float)) or not 0 <= first_seen <= now:
+        first_seen = now
+    behind = upstream > version[:3]
+    multiple_releases = (
+        upstream[:2] > (version[0], version[1] + 1)
+        or (upstream[:2] == version[:2] and upstream[2] > version[2] + 1)
+    )
+    blocked = behind and (multiple_releases or now - first_seen >= 12 * 3600)
+    health = {
+        "upstream_version": latest, "package_version": manifest["cli_version"],
+        "first_seen": first_seen, "checked_at": now,
+        "status": "blocked" if blocked else "pending" if behind else "current",
+    }
+    with tempfile.TemporaryDirectory(prefix=".health-", dir=share) as temporary:
+        staged = Path(temporary) / "health.json"
+        staged.write_text(json.dumps(health) + "\n")
+        staged.replace(health_file)
+    if blocked:
+        raise ValueError(
+            f"Upstream Codex {latest} is newer than the latest statusline package "
+            f"({manifest['cli_version']}); the release pipeline needs attention: "
+            f"https://github.com/{REPOSITORY}/actions/workflows/release.yml"
+        )
+    if behind:
+        print(f"Latest statusline package installed; waiting for upstream Codex {latest} "
+              "to pass the release pipeline (12-hour grace period).", file=sys.stderr)
+    return not behind
 
 
 def download(url: str, destination: Path) -> None:
@@ -156,8 +219,22 @@ def update(share: Path, bin_dir: Path) -> None:
             print("Another update is already running.")
             return
         request = urllib.request.Request(API, headers={"User-Agent": "codex-statusline-updater"})
-        with urllib.request.urlopen(request, timeout=30) as response:
-            release = json.load(response)
+        try:
+            with urllib.request.urlopen(request, timeout=30) as response:
+                release = json.load(response)
+        except urllib.error.HTTPError as error:
+            if error.code not in (403, 429):
+                raise
+            error.close()
+            # Public release redirects do not consume the API's shared IP quota.
+            tag = latest_tag(REPOSITORY)
+            if not re.fullmatch(r"v\d+\.\d+\.\d+\+statusline\.\d+\.[0-9a-f]{12}", tag):
+                raise ValueError("Invalid latest statusline release tag") from error
+            base = f"https://github.com/{REPOSITORY}/releases/download/{urllib.parse.quote(tag, safe='')}/"
+            release = {"tag_name": tag, "assets": [
+                {"name": name, "browser_download_url": base + name}
+                for name in (f"{PLATFORM}.json", f"codex-statusline-{PLATFORM}.tar.gz")
+            ]}
         if release.get("draft") or release.get("prerelease"):
             raise ValueError("Expected a stable public release")
         assets = {asset["name"]: asset["browser_download_url"] for asset in release["assets"]}
@@ -179,7 +256,8 @@ def update(share: Path, bin_dir: Path) -> None:
                         print("Installed package failed validation; downloading a replacement.")
                     else:
                         activate((share / "current").resolve(), share, bin_dir)
-                        print(f"Already current: {installed['version']}")
+                        if verify_upstream_freshness(manifest, share):
+                            print(f"Already current: {installed['version']}")
                         return
                 candidate_version = cli_version_components(manifest.get("cli_version"))
                 current_version = cli_version_components(installed.get("cli_version"))
@@ -190,6 +268,7 @@ def update(share: Path, bin_dir: Path) -> None:
             archive = Path(temporary) / "package.tar.gz"
             download(assets[f"codex-statusline-{PLATFORM}.tar.gz"], archive)
             install_archive(archive, manifest, share, bin_dir)
+            verify_upstream_freshness(manifest, share)
 
 
 def main() -> None:
@@ -202,7 +281,7 @@ def main() -> None:
     try:
         update(args.share_root.expanduser().absolute(), args.bin_dir.expanduser().absolute())
     except (OSError, ValueError, KeyError, subprocess.SubprocessError, tarfile.TarError) as error:
-        parser.exit(1, f"Update failed; existing installation retained: {error}\n")
+        parser.exit(1, f"Update check failed: {error}\n")
 
 
 if __name__ == "__main__":

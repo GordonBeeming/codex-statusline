@@ -1,11 +1,13 @@
 import hashlib
 import importlib.util
+import contextlib
 import io
 import json
 import shutil
 import tarfile
 import tempfile
 import unittest
+import urllib.error
 from pathlib import Path
 from unittest.mock import patch
 
@@ -17,6 +19,9 @@ spec.loader.exec_module(updater)
 
 class UpdateTests(unittest.TestCase):
     def setUp(self):
+        freshness = patch.object(updater, "latest_upstream_version", return_value=(0, 159, 3))
+        freshness.start()
+        self.addCleanup(freshness.stop)
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name).resolve()
@@ -51,6 +56,104 @@ class UpdateTests(unittest.TestCase):
 
     def install(self):
         updater.install_archive(self.archive, self.manifest, self.share, self.root / "bin")
+
+    def test_stale_public_package_is_reported_instead_of_already_current(self):
+        self.package()
+        self.install()
+        release = {"tag_name": self.manifest["tag"], "assets": [{
+            "name": f"{updater.PLATFORM}.json", "browser_download_url": "manifest",
+        }]}
+        def download_manifest(url, path):
+            path.write_text(json.dumps(self.manifest))
+        with patch.object(updater.platform, "system", return_value="Darwin"), \
+             patch.object(updater.platform, "machine", return_value="arm64"), \
+             patch.object(updater.urllib.request, "urlopen", return_value=io.BytesIO(json.dumps(release).encode())), \
+             patch.object(updater, "download", side_effect=download_manifest), \
+             patch.object(updater, "latest_upstream_version", return_value=(0, 169, 0), create=True):
+            with self.assertRaisesRegex(ValueError, "0.169.0.*release pipeline"):
+                updater.update(self.share, self.root / "bin")
+        self.assertEqual(updater.installed_manifest(self.share / "current/statusline-release.json"), self.manifest)
+
+    def test_api_rate_limit_falls_back_to_public_release_downloads(self):
+        self.package()
+        self.install()
+        def download_manifest(url, path):
+            self.assertIn("/releases/download/v0.159.3%2Bstatusline.3.abcdef123456/", url)
+            path.write_text(json.dumps(self.manifest))
+        with patch.object(updater.platform, "system", return_value="Darwin"), \
+             patch.object(updater.platform, "machine", return_value="arm64"), \
+             patch.object(updater.urllib.request, "urlopen", side_effect=urllib.error.HTTPError(updater.API, 403, "rate limited", {}, None)), \
+             patch.object(updater, "latest_tag", return_value=self.manifest["tag"]), \
+             patch.object(updater, "download", side_effect=download_manifest):
+            updater.update(self.share, self.root / "bin")
+
+    def test_latest_tag_rejects_redirects_outside_the_requested_repository(self):
+        from unittest.mock import MagicMock
+        response = MagicMock()
+        response.__enter__.return_value.geturl.return_value = "https://example.com/releases/tag/rust-v0.169.0"
+        with patch.object(updater.urllib.request, "urlopen", return_value=response):
+            with self.assertRaisesRegex(ValueError, "Unexpected latest release URL"):
+                updater.latest_tag("openai/codex")
+
+    def test_newer_available_package_installs_even_when_upstream_is_ahead(self):
+        self.package()
+        release = {"tag_name": self.manifest["tag"], "assets": [
+            {"name": f"{updater.PLATFORM}.json", "browser_download_url": "manifest"},
+            {"name": f"codex-statusline-{updater.PLATFORM}.tar.gz", "browser_download_url": "archive"},
+        ]}
+        def download(url, path):
+            if url == "manifest":
+                path.write_text(json.dumps(self.manifest))
+            else:
+                shutil.copyfile(self.archive, path)
+        with patch.object(updater.platform, "system", return_value="Darwin"), \
+             patch.object(updater.platform, "machine", return_value="arm64"), \
+             patch.object(updater.urllib.request, "urlopen", return_value=io.BytesIO(json.dumps(release).encode())), \
+             patch.object(updater, "download", side_effect=download), \
+             patch.object(updater, "latest_upstream_version", return_value=(0, 169, 0)):
+            with self.assertRaisesRegex(ValueError, "release pipeline"):
+                updater.update(self.share, self.root / "bin")
+        self.assertEqual(updater.installed_manifest(self.share / "current/statusline-release.json"), self.manifest)
+        self.assertEqual((self.share / "previous").resolve(), self.old)
+
+    def test_one_new_upstream_release_has_a_bounded_build_grace_period(self):
+        with patch.object(updater, "latest_upstream_version", return_value=(0, 160, 0)), \
+             patch.object(updater.time, "time", return_value=100_000):
+            self.assertFalse(updater.verify_upstream_freshness(self.manifest, self.share))
+        self.assertEqual(json.loads((self.share / "update-health.json").read_text())["status"], "pending")
+        with patch.object(updater, "latest_upstream_version", return_value=(0, 160, 0)), \
+             patch.object(updater.time, "time", return_value=100_000 + 12 * 3600):
+            with self.assertRaisesRegex(ValueError, "release pipeline"):
+                updater.verify_upstream_freshness(self.manifest, self.share)
+        self.assertEqual(json.loads((self.share / "update-health.json").read_text())["status"], "blocked")
+        self.assertTrue(updater.verify_upstream_freshness(self.manifest, self.share))
+        self.assertEqual(json.loads((self.share / "update-health.json").read_text())["status"], "current")
+
+    def test_pending_pipeline_does_not_claim_already_current(self):
+        self.package()
+        self.install()
+        release = {"tag_name": self.manifest["tag"], "assets": [{
+            "name": f"{updater.PLATFORM}.json", "browser_download_url": "manifest",
+        }]}
+        def download_manifest(url, path):
+            path.write_text(json.dumps(self.manifest))
+        output = io.StringIO()
+        with patch.object(updater.platform, "system", return_value="Darwin"), \
+             patch.object(updater.platform, "machine", return_value="arm64"), \
+             patch.object(updater.urllib.request, "urlopen", return_value=io.BytesIO(json.dumps(release).encode())), \
+             patch.object(updater, "download", side_effect=download_manifest), \
+             patch.object(updater, "latest_upstream_version", return_value=(0, 160, 0)), \
+             contextlib.redirect_stdout(output):
+            updater.update(self.share, self.root / "bin")
+        self.assertNotIn("Already current", output.getvalue())
+        self.assertEqual(json.loads((self.share / "update-health.json").read_text())["status"], "pending")
+
+    def test_corrupt_health_file_does_not_prevent_detecting_a_large_version_gap(self):
+        (self.share / "update-health.json").write_text("broken json")
+        with patch.object(updater, "latest_upstream_version", return_value=(0, 169, 0)):
+            with self.assertRaisesRegex(ValueError, "release pipeline"):
+                updater.verify_upstream_freshness(self.manifest, self.share)
+        self.assertEqual(json.loads((self.share / "update-health.json").read_text())["status"], "blocked")
 
     def test_success_switches_current_and_keeps_previous(self):
         self.package()

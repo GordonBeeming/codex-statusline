@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 export GIT_TERMINAL_PROMPT=0
+export CARGO_NET_GIT_FETCH_WITH_CLI=true
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 # shellcheck source=../upstream.lock

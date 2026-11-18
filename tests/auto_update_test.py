@@ -39,6 +39,8 @@ class ScheduleTests(unittest.TestCase):
                 config = plistlib.loads(agent.read_bytes())
                 self.assertEqual(config["StartInterval"], 21600)
                 self.assertTrue(config["RunAtLoad"])
+                self.assertEqual(config["KeepAlive"], {"SuccessfulExit": False})
+                self.assertEqual(config["ThrottleInterval"], 900)
                 self.assertTrue((home / "share/update.py").is_file())
                 if packaged:
                     self.assertEqual((home / "share/update.py").read_text(), "print('installed package updater')\n")
